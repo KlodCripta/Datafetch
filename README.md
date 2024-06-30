@@ -4,8 +4,8 @@ This bash script gathers detailed information about the operating system and har
 
 ## Dependencies
 
-    bash
-    lscpu, lspci, free, awk, grep (standard Linux commands)
+- bash
+- lscpu, lspci, free, awk, grep (standard Linux commands)
 
 ## Usage
 
@@ -19,10 +19,10 @@ chmod +x datafetch.sh
 ```
 ## Features
 
-    Retrieves information about CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
-    Identifies the operating system, user utilization level, architecture, kernel, desktop environment (DE), etc.
-    Detects package manager and AUR helper used (only on Arch & Arch-based systems).
-    Information about graphical and audio servers in use.
+- Retrieves information about CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
+- Identifies the operating system, user utilization level, architecture, kernel, desktop environment (DE), etc.
+- Detects package manager and AUR helper used (only on Arch & Arch-based systems).
+- Information about graphical and audio servers in use.
 
 ## Author
 Klod Cripta
