@@ -20,7 +20,7 @@ chmod +x datafetch.sh
 ## Features
 
 - Retrieves information about CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
-- Identifies the operating system, user utilization level, architecture, kernel, desktop environment (DE), etc.
+- Identifies the operating system, **Distribution level** (Beginner, Intermediate, Advanced, Expert, Power), architecture, kernel, desktop environment (DE), etc.
 - Detects package manager and AUR helper used (only on Arch & Arch-based systems).
 - Information about graphical and audio servers in use.
 
@@ -56,7 +56,7 @@ chmod +x datafetch.sh
 ```
 ## Funzionalità
 - Ottiene informazioni sulla CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
-- Identifica il sistema operativo, il **livello utente di utilizzo**, l'architettura, il kernel, l'ambiente desktop (DE), etc.
+- Identifica il sistema operativo, il **livello della distribuzione** (Principiante, Intermedio, Avanzato, Esperto, Power), l'architettura, il kernel, l'ambiente desktop (DE), etc.
 - Rileva il gestore dei pacchetti e l'helper AUR utilizzato (solo in caso di Arch & Arch-based).
 - Informazioni sui server grafici e audio in uso.
 
