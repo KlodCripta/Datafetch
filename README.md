@@ -8,13 +8,13 @@ Questo script bash raccoglie informazioni dettagliate sul sistema operativo e su
 
 ## Utilizzo
 1. Assicurarsi che lo script abbia i permessi di esecuzione:
-
+```bash
 chmod +x datafetch.sh
-
+```
 2. Eseguire lo script:
-
+```bash
 ./datafetch.sh
-
+```
 ## Funzionalità
 - Ottiene informazioni sulla CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
 - Identifica il sistema operativo, il **livello utente di utilizzo**, l'architettura, il kernel, l'ambiente desktop (DE), etc.
