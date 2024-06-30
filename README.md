@@ -1,3 +1,40 @@
+## DATAFETCH: Advanced Data Retrieval
+
+This bash script gathers detailed information about the operating system and hardware of a GNU/Linux computer.
+
+## Dependencies
+
+    bash
+    lscpu, lspci, free, awk, grep (standard Linux commands)
+
+## Usage
+
+1. Ensure the script has execution permissions:
+```bash
+chmod +x datafetch.sh
+```
+2. Run the script:
+```bash
+./datafetch.sh
+```
+## Features
+
+    Retrieves information about CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
+    Identifies the operating system, user utilization level, architecture, kernel, desktop environment (DE), etc.
+    Detects package manager and AUR helper used (only on Arch & Arch-based systems).
+    Information about graphical and audio servers in use.
+
+## Author
+Klod Cripta
+
+## Credits
+Icon image by rawpixel.com on Freepik
+
+## License
+This project is licensed under the MIT License - see the LICENSE.md file for more details.
+
+## ITALIANO:
+
 # DATAFETCH: Advanced Data Retrieval
 
 Questo script bash raccoglie informazioni dettagliate sul sistema operativo e sull'hardware di un computer GNU/Linux.
@@ -23,6 +60,9 @@ chmod +x datafetch.sh
 
 ## Autore
 Klod Cripta
+
+## Crediti
+Icon image by rawpixel.com on Freepik
 
 ## Licenza
 Questo progetto è sotto licenza MIT - vedere il file LICENSE.md per ulteriori dettagli.
