@@ -21,11 +21,11 @@ chmod +x datafetch.sh
 ## Installation
 To install on ARCH LINUX and derivatives:
 
-Download the Datafetch-1.0.0-1-any.pkg.tar.zst file and install it with sudo pacman -U (enter the path to the downloaded Datafetch-1.0.0-1-any.pkg.tar.zst file here or drag the Datafetch-1.0.0-1-any.pkg.tar.zst file directly from the folder it is located in into Terminal/Konsole)
+Download the datafetch-1.0.0-1-any.pkg.tar.zst file and install it with sudo pacman -U (enter the path to the downloaded datafetch-1.0.0-1-any.pkg.tar.zst file here or drag the datafetch-1.0.0-1-any.pkg.tar.zst file directly from the folder it is located in into Terminal/Konsole)
 
 The string should look like this:
 ```bash
-sudo pacman -U /home/UserName/Downloaded/Datafetch-1.0.0-1-any.pkg.tar.zst
+sudo pacman -U /home/UserName/Downloaded/datafetch-1.0.0-1-any.pkg.tar.zst
 ```
 
 ## Features
@@ -69,11 +69,11 @@ chmod +x datafetch.sh
 ## Installazione
 Per installare su ARCH LINUX e derivate:
 
-Scaricate il file Datafetch-1.0.0-1-any.pkg.tar.zst ed installatelo con sudo pacman -U (inserisci qui il percorso del file scaricato Datafetch-1.0.0-1-any.pkg.tar.zst oppure trascina il file Datafetch-1.0.0-1-any.pkg.tar.zst direttamente dalla cartella in cui si trova fin dentro il Terminale/Konsole)
+Scaricate il file datafetch-1.0.0-1-any.pkg.tar.zst ed installatelo con sudo pacman -U (inserisci qui il percorso del file scaricato datafetch-1.0.0-1-any.pkg.tar.zst oppure trascina il file datafetch-1.0.0-1-any.pkg.tar.zst direttamente dalla cartella in cui si trova fin dentro il Terminale/Konsole)
 
 La stringa dovrebbe assomigliare a questa:
 ```bash
-sudo pacman -U /home/NomeUtente/Scaricati/Datafetch-1.0.0-1-any.pkg.tar.zst
+sudo pacman -U /home/NomeUtente/Scaricati/datafetch-1.0.0-1-any.pkg.tar.zst
 ```
 ## Funzionalità
 - Ottiene informazioni sulla CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
