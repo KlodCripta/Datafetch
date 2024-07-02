@@ -7,22 +7,15 @@ This bash script gathers detailed information about the operating system and har
 - bash
 - lscpu, lspci, free, awk, grep (standard Linux commands)
 
-## Usage
-
-1. Ensure the script has execution permissions:
-```bash
-chmod +x datafetch.sh
-```
-2. Run the script:
-```bash
-datafetch
-```
-
 ## Installation
-To install, download the datafetch.zip file and extract it. From the terminal, move to the directory you just unzipped (just drag and drop it into the terminal) and install the program with:
+
+To install Datafetch **in any GNU/Linux distribution**, simply download the **Datafetch.zip** file and extract it.
+From the terminal, move to the directory you just unzipped (simply drag it, drop it into the terminal and press Enter) and install the program with:
 ```bash
 bash install.sh
 ```
+Now you can start the program directly from the command line, simply by typing **datafetch** and pressing Enter.
+
 ## Features
 
 - Retrieves information about CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
@@ -31,8 +24,7 @@ bash install.sh
 - Information about graphical and audio servers in use.
 
 ## Author
-Klod Cripta
-«KlodCripta@linux.it»
+Klod Cripta «KlodCripta@linux.it»
 
 ## License
 This project is licensed under the MIT License - see the LICENSE.md file for more details.
@@ -49,21 +41,14 @@ Questo script bash raccoglie informazioni dettagliate sul sistema operativo e su
 - bash
 - lscpu, lspci, free, awk, grep (comandi standard di Linux)
 
-## Utilizzo
-1. Assicurarsi che lo script abbia i permessi di esecuzione:
-```bash
-chmod +x datafetch.sh
-```
-2. Eseguire lo script:
-```bash
-datafetch
-```
-
 ## Installazione
-Per installare, scaricate il file datafetch.zip ed estraetelo. Da terminale, spostatevi nella directory appena scompattata (è sufficiente trascinarla e rilasciarla nel terminale) ed installate il programma con:
+Per installare Datafetch **in qualunque distribuzione GNU/Linux**, è sufficiente scaricare il file **Datafetch.zip** ed estrarlo. 
+Da terminale, spostarsi nella directory appena scompattata (è sufficiente trascinarla, rilasciarla nel terminale e premere Invio) ed installare il programma con:
 ```bash
 bash install.sh
 ```
+Ora è possibile avviare il programma direttamente da riga di comando, semplicemente digitando **datafetch** e premendo Invio.
+
 ## Funzionalità
 - Ottiene informazioni sulla CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
 - Identifica il sistema operativo, il **livello della distribuzione** (Principiante, Intermedio, Avanzato, Esperto, Power), l'architettura, il kernel, l'ambiente desktop (DE), etc.
@@ -71,7 +56,7 @@ bash install.sh
 - Informazioni sui server grafici e audio in uso.
 
 ## Autore
-Klod Cripta
-«KlodCripta@linux.it»
+Klod Cripta «KlodCripta@linux.it»
+
 ## Licenza
 Questo progetto è sotto licenza MIT - vedere il file LICENSE.md per ulteriori dettagli.
