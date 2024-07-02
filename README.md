@@ -15,19 +15,14 @@ chmod +x datafetch.sh
 ```
 2. Run the script:
 ```bash
-./datafetch.sh
+datafetch
 ```
 
 ## Installation
-To install on ARCH LINUX and derivatives:
-
-Download the datafetch-1.0.0-1-any.pkg.tar.zst file and install it with sudo pacman -U (enter the path to the downloaded datafetch-1.0.0-1-any.pkg.tar.zst file here or drag the datafetch-1.0.0-1-any.pkg.tar.zst file directly from the folder it is located in into Terminal/Konsole)
-
-The string should look like this:
+To install, download the datafetch.zip file and extract it. From the terminal, move to the directory you just unzipped (just drag and drop it into the terminal) and install the program with:
 ```bash
-sudo pacman -U /home/UserName/Downloaded/datafetch-1.0.0-1-any.pkg.tar.zst
+bash install.sh
 ```
-
 ## Features
 
 - Retrieves information about CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
@@ -37,9 +32,6 @@ sudo pacman -U /home/UserName/Downloaded/datafetch-1.0.0-1-any.pkg.tar.zst
 
 ## Author
 Klod Cripta
-
-## Credits
-Icon image by rawpixel.com on Freepik
 
 ## License
 This project is licensed under the MIT License - see the LICENSE.md file for more details.
@@ -63,17 +55,13 @@ chmod +x datafetch.sh
 ```
 2. Eseguire lo script:
 ```bash
-./datafetch.sh
+datafetch
 ```
 
 ## Installazione
-Per installare su ARCH LINUX e derivate:
-
-Scaricate il file datafetch-1.0.0-1-any.pkg.tar.zst ed installatelo con sudo pacman -U (inserisci qui il percorso del file scaricato datafetch-1.0.0-1-any.pkg.tar.zst oppure trascina il file datafetch-1.0.0-1-any.pkg.tar.zst direttamente dalla cartella in cui si trova fin dentro il Terminale/Konsole)
-
-La stringa dovrebbe assomigliare a questa:
+Per installare, scaricate il file datafetch.zip ed estraetelo. Da terminale, spostatevi nella directory appena scompattata (è sufficiente trascinarla e rilasciarla nel terminale) ed installate il programma con:
 ```bash
-sudo pacman -U /home/NomeUtente/Scaricati/datafetch-1.0.0-1-any.pkg.tar.zst
+bash install.sh
 ```
 ## Funzionalità
 - Ottiene informazioni sulla CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
@@ -83,9 +71,6 @@ sudo pacman -U /home/NomeUtente/Scaricati/datafetch-1.0.0-1-any.pkg.tar.zst
 
 ## Autore
 Klod Cripta
-
-## Crediti
-Icon image by rawpixel.com on Freepik
 
 ## Licenza
 Questo progetto è sotto licenza MIT - vedere il file LICENSE.md per ulteriori dettagli.
