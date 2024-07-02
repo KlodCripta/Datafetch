@@ -32,6 +32,7 @@ bash install.sh
 
 ## Author
 Klod Cripta
+«KlodCripta@linux.it»
 
 ## License
 This project is licensed under the MIT License - see the LICENSE.md file for more details.
@@ -71,6 +72,6 @@ bash install.sh
 
 ## Autore
 Klod Cripta
-
+«KlodCripta@linux.it»
 ## Licenza
 Questo progetto è sotto licenza MIT - vedere il file LICENSE.md per ulteriori dettagli.
