@@ -51,7 +51,8 @@ Questo script bash raccoglie informazioni dettagliate sul sistema operativo e su
 
 ## Installazione
 Per installare Datafetch **in qualunque distribuzione GNU/Linux**, è sufficiente scaricare il file **Datafetch.zip** ed estrarlo. 
-Da terminale, spostarsi nella directory appena scompattata (è sufficiente trascinarla, rilasciarla nel terminale e premere Invio) ed installare il programma con:
+
+Da terminale, spostarsi nella directory appena scompattata digitando "cd percorso/della/directory" (puoi anche scrivere cd e trascinare la directory rilasciandola nel terminale per poi premere Invio) ed installare il programma con:
 ```bash
 bash install.sh
 ```
