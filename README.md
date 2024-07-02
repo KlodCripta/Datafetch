@@ -23,6 +23,14 @@ Now you can start the program directly from the command line, simply by typing *
 - Detects package manager and AUR helper used (only on Arch & Arch-based systems).
 - Information about graphical and audio servers in use.
 
+## Contribution
+
+If you would like to contribute to Datafetch, you are welcome! You can contribute suggestions, bug reports, feature requests, or even direct contributions to the source code.
+
+## Bug report
+
+If you encounter any issues or errors with Datafetch, please report them using the GitHub issue tracker in the repository. Provide complete details on the steps to reproduce the issue, and include information about your operating system and the version of Datafetch you are using.
+
 ## Author
 Klod Cripta «KlodCripta@linux.it»
 
@@ -54,6 +62,14 @@ Ora è possibile avviare il programma direttamente da riga di comando, semplicem
 - Identifica il sistema operativo, il **livello della distribuzione** (Principiante, Intermedio, Avanzato, Esperto, Power), l'architettura, il kernel, l'ambiente desktop (DE), etc.
 - Rileva il gestore dei pacchetti e l'helper AUR utilizzato (solo in caso di Arch & Arch-based).
 - Informazioni sui server grafici e audio in uso.
+
+## Contribuzione
+
+Se desideri contribuire a Datafetch, sei il benvenuto! Puoi contribuire con suggerimenti, segnalazioni di bug, richieste di funzionalità o persino con contributi diretti al codice sorgente.
+
+## Segnalazione di bug
+
+Se riscontri problemi o errori con Datafetch, ti preghiamo di segnalarli utilizzando il sistema di tracciamento problemi di GitHub nel repository. Fornisci dettagli completi sui passaggi per riprodurre il problema e includi informazioni sul sistema operativo e la versione di Datafetch utilizzata.
 
 ## Autore
 Klod Cripta «KlodCripta@linux.it»
