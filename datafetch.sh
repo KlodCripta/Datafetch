@@ -108,7 +108,7 @@ get_user_level() {
     distribution=$(lsb_release -is 2>/dev/null || echo "Non disponibile")
     case $distribution in
         "Ubuntu" | "LinuxMint" | "Zorin" | "Elementary" | "LinuxLite" | "Peppermint" | "Bodhi" | "Kubuntu" | "Lubuntu" | "Xubuntu" | "Q4OS" | "Deepin" | "KDE neon" | "Feren OS" | "Trisquel" | "MakuluLinux" | "Netrunner")
-            level="Principiante"
+            level="Facile"
             ;;
         "Fedora" | "openSUSE" | "Pop!_OS" | "Solus" | "Linux Lite" | "Peppermint")
             level="Intermedio"
