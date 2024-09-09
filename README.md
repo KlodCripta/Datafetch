@@ -26,8 +26,8 @@ sudo rm /usr/local/bin/datafetch
 
 ## Features
 
-- Retrieves information about CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
-- Identifies the operating system, **Distribution level** (Beginner, Intermediate, Advanced, Expert, Power), architecture, kernel, desktop environment (DE), etc.
+- Retrieves information about CPU and maximum frequency in boost, RAM, GPU, swap, bootloader, init system, filesystem, etc.
+- Identifies the operating system, **Distribution level** (Easy, Intermediate, Advanced, Expert, Power), architecture, kernel, desktop environment (DE), etc.
 - Detects package manager and AUR helper used (only on Arch & Arch-based systems).
 - Information about graphical and audio servers in use.
 
@@ -73,8 +73,8 @@ Per disinstallare il programma digitare:
 sudo rm /usr/local/bin/datafetch
 ```
 ## Funzionalità
-- Ottiene informazioni sulla CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
-- Identifica il sistema operativo, il **livello della distribuzione** (Principiante, Intermedio, Avanzato, Esperto, Power), l'architettura, il kernel, l'ambiente desktop (DE), etc.
+- Ottiene informazioni sulla CPU e frequenza massima in boost), RAM, GPU, swap, bootloader, init system, filesystem, etc.
+- Identifica il sistema operativo, il **livello della distribuzione** (Facile, Intermedio, Avanzato, Esperto, Power), l'architettura, il kernel, l'ambiente desktop (DE), etc.
 - Rileva il gestore dei pacchetti e l'helper AUR utilizzato (solo in caso di Arch & Arch-based).
 - Informazioni sui server grafici e audio in uso.
 
