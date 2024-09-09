@@ -18,10 +18,12 @@ bash install.sh
 Now you can start the program directly from the command line, simply by typing **datafetch** and pressing Enter.
 
 ## Uninstall
+
 To uninstall the program type:
 ```bash
 sudo rm /usr/local/bin/datafetch
 ```
+
 ## Features
 
 - Retrieves information about CPU, RAM, GPU, swap, bootloader, init system, filesystem, etc.
@@ -65,6 +67,7 @@ bash install.sh
 Ora è possibile avviare il programma direttamente da riga di comando, semplicemente digitando **datafetch** e premendo Invio.
 
 ## Disinstallare
+
 Per disinstallare il programma digitare:
 ```bash
 sudo rm /usr/local/bin/datafetch
