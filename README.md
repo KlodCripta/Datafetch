@@ -7,6 +7,7 @@ This bash script gathers detailed information about the operating system and har
 - bash
 - lscpu, lspci, free, awk, grep (standard Linux commands)
 - dmidecode
+- bc
 
 ## Installation
 
@@ -58,6 +59,7 @@ Questo script bash raccoglie informazioni dettagliate sul sistema operativo e su
 - bash
 - lscpu, lspci, free, awk, grep (comandi standard di Linux)
 - dmidecode
+- bc
 
 ## Installazione
 Per installare Datafetch **in qualunque distribuzione GNU/Linux**, è sufficiente scaricare il file **Datafetch.zip** ed estrarlo. 
