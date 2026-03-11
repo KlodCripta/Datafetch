@@ -23,7 +23,7 @@ Designed to be fast, dependency-light and compatible with most GNU/Linux distrib
 ## Screenshot
 
 <p align="center">
-  <img src="datafetch.png" width="700">
+  <img src="datafetch.png" width="350">
 </p>
 
 ---
