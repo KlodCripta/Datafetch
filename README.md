@@ -1,5 +1,21 @@
 # DATAFETCH – Live System Dashboard
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/KlodCripta/Datafetch/main/datafetch_locandina.png" width="500">
+</p>
+
+<p align="center">
+  <a href="https://aur.archlinux.org/packages/datafetch">
+    <img src="https://img.shields.io/aur/version/datafetch?style=for-the-badge&logo=arch-linux&color=1793D1">
+  </a>
+  <a href="https://aur.archlinux.org/packages/datafetch">
+    <img src="https://img.shields.io/aur/votes/datafetch?style=for-the-badge&color=blue">
+  </a>
+  <a href="https://github.com/KlodCripta/Datafetch/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge">
+  </a>
+</p>
+
 Datafetch is a lightweight Bash script that displays real-time information about your Linux system directly in the terminal.
 
 It provides a clean and constantly updating dashboard showing CPU, memory and system information with visual usage bars.
