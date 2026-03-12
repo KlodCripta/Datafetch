@@ -1,7 +1,7 @@
 # DATAFETCH – Live System Dashboard
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/KlodCripta/Datafetch/main/datafetch_locandina.png" width="500">
+  <img src="https://raw.githubusercontent.com/KlodCripta/Datafetch/main/datafetch_locandina.png" width="300">
 </p>
 
 <p align="center">
