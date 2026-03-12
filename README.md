@@ -8,9 +8,6 @@
   <a href="https://aur.archlinux.org/packages/datafetch">
     <img src="https://img.shields.io/aur/version/datafetch?style=for-the-badge&logo=arch-linux&color=1793D1">
   </a>
-  <a href="https://aur.archlinux.org/packages/datafetch">
-    <img src="https://img.shields.io/aur/votes/datafetch?style=for-the-badge&color=blue">
-  </a>
   <a href="https://github.com/KlodCripta/Datafetch/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge">
   </a>
