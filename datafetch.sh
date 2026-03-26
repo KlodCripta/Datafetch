@@ -491,7 +491,7 @@ line() {
 }
 
 header() {
-    printf "${RED}════════════════════ DATAFETCH 2.0 ════════════════════${RESET}\n"
+    printf "${RED}════════════════════ DATAFETCH 2.1 ════════════════════${RESET}\n"
     printf "${GREEN}DATAFETCH – Live System Dashboard${RESET}\n\n"
 }
 
