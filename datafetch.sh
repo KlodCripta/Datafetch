@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================
-# DATAFETCH 2.0
+# DATAFETCH 2.1
 # Live System Dashboard
 # ==============================
 
