@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/KlodCripta/Datafetch/main/datafetch_poster.png" width="300" alt="Datafetch poster">
+  <img src="https://raw.githubusercontent.com/KlodCripta/Datafetch/main/datafetch_poster.png" width="500" alt="Datafetch poster">
 </p>
 
 <h1 align="center">Datafetch – Live System Dashboard</h1>
