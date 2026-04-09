@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================
-# DATAFETCH 2.1
+# DATAFETCH 2.3.2
 # Live System Dashboard
 # ==============================
 
@@ -595,7 +595,7 @@ header() {
     printf "${RED}██  ██ ██   ██    ██    ██   ██ ██      ██         ██    ██      ██  ██${RESET}\n"
     printf "${RED}█████  ██   ██    ██    ██   ██ ██      ███████    ██     ██████ ██  ██${RESET}\n"
     printf "\n"
-    printf "${ORANGE} Live System Dashboard${RESET}   v2.2  |  Klod Cripta\n"
+    printf "${ORANGE} Live System Dashboard${RESET}   v2.3.2  |  Klod Cripta\n"
     printf "${RED}────────────────────────────────────────────────────────${RESET}\n\n"
 }
 
