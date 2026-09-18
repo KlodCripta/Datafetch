@@ -1,687 +1,808 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Datafetch — Live System Dashboard
+# Copyright (c) 2024–2026 Klod Cripta. MIT License.
+# Bash 4.3+; Linux /proc and /sys. Optional tools enrich static information.
 
-# ==============================
-# DATAFETCH 2.3.2
-# Live System Dashboard
-# ==============================
+VERSION='3.0.0-preview.1'
+INTERVAL=1
+INTERVAL_CS=100
+ONCE=0
+COMPACT=0
+DETAILS=0
+ASCII=0
+COLOR_MODE=auto
+REQUESTED_WIDTH=0
+REQUESTED_INTERFACE=''
+ACTIVE=0
+SUSPENDED=0
+PAUSED=0
+RESIZE=1
+PREV_CPU_TOTAL=''
+PREV_CPU_IDLE=0
+PREV_NET_TIME=''
+PREV_NET_IFACE=''
+CPU_PERCENT=''
+CPU_TEMP=''
+CPU_PEAK=''
+RAM_TOTAL=0 RAM_USED=0 RAM_PERCENT=0
+SWAP_TOTAL=0 SWAP_USED=0 SWAP_PERCENT=0
+RX_RATE=0 TX_RATE=0
+DISK_TOTAL=0 DISK_USED=0 DISK_FREE=0 DISK_PERCENT=0
+DISK_NEXT=0
+BAT_NAME='' BAT_PERCENT='' BAT_STATUS='' BAT_HEALTH='' BAT_POWER=''
+CPU_FREQ=''
+NET_IFACE=''
+NOW_CS=0
+UPTIME=''
+RESET='' BOLD='' ACCENT='' DIM='' GOOD='' WARN='' BAD=''
+BAR_ON='#' BAR_OFF='-' RULE_CHAR='-' MARK='>' DEG='C'
+CPU_TEMP_FILES=()
+CPU_HISTORY=()
+FRAME=()
+PREVIOUS_FRAME=()
+GPU_NAMES=()
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-ORANGE='\033[38;5;208m'
-RESET='\033[0m'
+usage() {
+    cat <<'HELP'
+Datafetch — Live System Dashboard
 
-BAR_WIDTH=18
+Usage: datafetch [options]
 
-MIN_COLS=56
-MIN_ROWS=30
+  --once              Print a snapshot and exit (automatic when piped)
+  --interval SECONDS  Refresh every 0.5–10 seconds; default: 1
+  --compact           Use the compact layout
+  --details           Start with the system details view
+  --interface NAME    Monitor a specific network interface
+  --width COLUMNS     Snapshot/content width, 48–160 columns
+  --ascii             Use only ASCII characters
+  --no-color          Disable colors (also respects NO_COLOR)
+  --color MODE        auto, always or never
+  -h, --help          Show this help
+  -v, --version       Show the version
 
-# ------------------------------
-# Cleanup on exit
-# ------------------------------
-cleanup() {
-    tput cnorm 2>/dev/null
-    printf "${RESET}"
-    clear
-    exit
+Live keys: p / space = pause, + = faster, - = slower, d = details, q = quit.
+No root access needed. No network requests. Disk statistics refresh every 5s.
+HELP
 }
 
-trap cleanup INT TERM
-trap handle_resize WINCH
+error() { printf 'Datafetch: %s\n' "$*" >&2; }
 
-# ------------------------------
-# Resize handler
-# ------------------------------
-handle_resize() {
-    :
+parse_args() {
+    while (($#)); do
+        case $1 in
+            --once) ONCE=1 ;;
+            --compact) COMPACT=1 ;;
+            --details) DETAILS=1 ;;
+            --ascii) ASCII=1 ;;
+            --no-color) COLOR_MODE=never ;;
+            -h|--help) usage; return 10 ;;
+            -v|--version) printf 'Datafetch %s\n' "$VERSION"; return 10 ;;
+            --interval|--width|--interface|--color)
+                (($# >= 2)) || { error "Missing value for $1"; return 2; }
+                case $1 in
+                    --interval)
+                        [[ $2 =~ ^[0-9]{1,2}(\.[0-9]{1,2})?$ ]] || { error 'Interval must be 0.5–10 seconds'; return 2; }
+                        INTERVAL_CS=$(LC_ALL=C awk -v n="$2" 'BEGIN {if(n<0.5 || n>10) exit 1; printf "%.0f",n*100}') || { error 'Interval must be 0.5–10 seconds'; return 2; }
+                        INTERVAL=$2 ;;
+                    --width)
+                        [[ $2 =~ ^[0-9]{2,3}$ ]] && ((10#$2 >= 48 && 10#$2 <= 160)) || { error 'Width must be 48–160 columns'; return 2; }
+                        REQUESTED_WIDTH=$((10#$2)) ;;
+                    --interface)
+                        [[ $2 =~ ^[[:alnum:]_.:-]+$ && -d /sys/class/net/$2 ]] || { error "Network interface not found: $2"; return 2; }
+                        REQUESTED_INTERFACE=$2 ;;
+                    --color)
+                        case $2 in auto|always|never) COLOR_MODE=$2 ;; *) error 'Color mode must be auto, always or never'; return 2 ;; esac ;;
+                esac
+                shift ;;
+            *) error "Unknown option: $1 (see --help)"; return 2 ;;
+        esac
+        shift
+    done
 }
 
-# ------------------------------
-# Terminal size check
-# ------------------------------
-_SIZE_OK_PREV=""
-_NEEDS_CLEAR=0
-
-check_terminal_size() {
-    local cols rows
-    cols=$(tput cols 2>/dev/null || echo 80)
-    rows=$(tput lines 2>/dev/null || echo 24)
-
-    if [ "$cols" -lt "$MIN_COLS" ] || [ "$rows" -lt "$MIN_ROWS" ]; then
-        local state="${cols}x${rows}"
-        if [ "$state" != "$_SIZE_OK_PREV" ]; then
-            clear
-            printf "\n"
-            printf "  ${YELLOW}Window too small.${RESET}\n"
-            printf "  Current size:   %sx%s\n" "$cols" "$rows"
-            printf "  Minimum size:   %sx%s\n\n" "$MIN_COLS" "$MIN_ROWS"
-            printf "  Resize the terminal and wait...\n"
-            _SIZE_OK_PREV="$state"
-        fi
-        return 1
-    fi
-
-        if [ -n "$_SIZE_OK_PREV" ]; then
-        _NEEDS_CLEAR=1
-    fi
-    _SIZE_OK_PREV=""
+# Functions returning small strings use REPLY to avoid a subprocess per field.
+read_value() {
+    REPLY=''
+    # Devices can disappear between the readability check and the read.
+    [[ -r $1 ]] && { IFS= read -r REPLY < "$1"; } 2>/dev/null
     return 0
 }
 
-# ------------------------------
-# Static info
-# ------------------------------
-get_os() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        echo "${PRETTY_NAME:-$NAME}"
-    else
-        echo "Not available"
+unsigned() { [[ $1 =~ ^[0-9]{1,15}$ ]]; }
+
+sanitize() {
+    REPLY=${1//[$'\001'-$'\037'$'\177']/ }
+}
+
+fit() {
+    local width=$1 value=$2
+    sanitize "$value"; value=$REPLY
+    if ((${#value} > width)); then
+        value="${value:0:width-1}~"
     fi
+    printf -v REPLY '%-*s' "$width" "$value"
 }
 
-get_host() {
-    if [ -r /proc/sys/kernel/hostname ]; then
-        cat /proc/sys/kernel/hostname
-    else
-        uname -n 2>/dev/null || echo "Not available"
-    fi
-}
-
-get_kernel() {
-    uname -r 2>/dev/null || echo "Not available"
-}
-
-get_shell() {
-    basename "${SHELL:-}" 2>/dev/null || echo "Not available"
-}
-
-get_cpu_model() {
-    if command -v lscpu >/dev/null 2>&1; then
-        lscpu \
-        | awk -F: '/Model name:/ {gsub(/^[ \t]+/, "", $2); print $2; exit}' \
-        | sed 's/ with Radeon Graphics//' \
-        | sed 's/ CPU @.*//' \
-        | sed 's/(R)//g; s/(TM)//g'
-    else
-        echo "Not available"
-    fi
-}
-
-get_cpu_cores() {
-    if command -v lscpu >/dev/null 2>&1; then
-        lscpu | awk -F: '/Core\(s\) per socket/ {gsub(/^[ \t]+/, "", $2); print $2; exit}'
-    else
-        echo "Not available"
-    fi
-}
-
-get_cpu_threads() {
-    if command -v lscpu >/dev/null 2>&1; then
-        lscpu | awk -F: '/^CPU\(s\)/ {gsub(/^[ \t]+/, "", $2); print $2; exit}'
-    else
-        echo "Not available"
-    fi
-}
-
-get_gpu() {
-    local vendor=""
-    local all_gpus=""
-    local chosen=""
-    local line=""
-    local clean=""
-
-    # ------------------------------------------------------------
-    # METODO 1: /sys/class/drm
-    # Serve solo per capire il vendor realmente corretto
-    # ------------------------------------------------------------
-    for card in /sys/class/drm/card[0-9]/device; do
-        [ -d "$card" ] || continue
-
-        if [ -r "$card/uevent" ]; then
-            vendor=$(grep -i '^PCI_ID=' "$card/uevent" 2>/dev/null \
-                | cut -d= -f2 \
-                | cut -d: -f1 \
-                | tr '[:upper:]' '[:lower:]')
-
-            case "$vendor" in
-                8086|10de|1002)
-                    break
-                    ;;
-                *)
-                    vendor=""
-                    ;;
-            esac
-        fi
-    done
-
-    # ------------------------------------------------------------
-    # METODO 2: lspci
-    # Serve per ottenere un nome più leggibile
-    # ------------------------------------------------------------
-    if command -v lspci >/dev/null 2>&1; then
-        all_gpus=$(lspci 2>/dev/null | grep -Ei 'VGA compatible controller|3D controller|Display controller')
-    fi
-
-    # Se lspci non restituisce nulla, fallback minimo
-    if [ -z "$all_gpus" ]; then
-        case "$vendor" in
-            8086) echo "Intel Graphics [Integrated]" ;;
-            10de) echo "NVIDIA GPU [Dedicated]" ;;
-            1002) echo "AMD GPU [Integrated]" ;;
-            *)    echo "Not available" ;;
-        esac
-        return
-    fi
-
-    # ------------------------------------------------------------
-    # Se /sys ha identificato un vendor, usa quello come priorità
-    # ------------------------------------------------------------
-    case "$vendor" in
-        8086)
-            chosen=$(printf '%s\n' "$all_gpus" | grep -i 'Intel' | head -n1)
-            ;;
-        10de)
-            chosen=$(printf '%s\n' "$all_gpus" | grep -i 'NVIDIA' | head -n1)
-            ;;
-        1002)
-            chosen=$(printf '%s\n' "$all_gpus" | grep -Ei 'AMD|ATI|Radeon' | head -n1)
-            ;;
-    esac
-
-    # ------------------------------------------------------------
-    # Fallback intelligente se /sys non basta o non trova match
-    # ------------------------------------------------------------
-    if [ -z "$chosen" ]; then
-        chosen=$(printf '%s\n' "$all_gpus" | grep -i 'NVIDIA' | head -n1)
-    fi
-
-    if [ -z "$chosen" ]; then
-        chosen=$(printf '%s\n' "$all_gpus" \
-            | grep -Ei 'AMD|ATI|Radeon' \
-            | grep -Ei 'RX [0-9]|Navi|RDNA' \
-            | head -n1)
-    fi
-
-    if [ -z "$chosen" ]; then
-        chosen=$(printf '%s\n' "$all_gpus" | grep -i 'Intel' | head -n1)
-    fi
-
-    if [ -z "$chosen" ]; then
-        chosen=$(printf '%s\n' "$all_gpus" | grep -Ei 'AMD|ATI|Radeon' | head -n1)
-    fi
-
-    [ -z "$chosen" ] && chosen=$(printf '%s\n' "$all_gpus" | head -n1)
-
-    line=$(printf '%s\n' "$chosen" \
-        | sed -E 's/^[0-9a-fA-F:.]+[[:space:]]+(VGA compatible controller|3D controller|Display controller):[[:space:]]*//' \
-        | sed -E 's/[[:space:]]*\(rev[[:space:]]+[0-9a-fA-F]+\)[[:space:]]*$//')
-
-    # ------------------------------------------------------------
-    # NVIDIA
-    # ------------------------------------------------------------
-    if printf '%s\n' "$line" | grep -qi 'NVIDIA'; then
-        clean=$(printf '%s\n' "$line" \
-            | grep -oE '\[(GeForce|Quadro|RTX|Tesla|Titan)[^]]+\]' \
-            | tr -d '[]' \
-            | head -n1)
-
-        if [ -z "$clean" ]; then
-            clean=$(printf '%s\n' "$line" \
-                | sed -E 's/.*NVIDIA Corporation[[:space:]]*//' \
-                | sed -E 's/[[:space:]]*\[.*//' \
-                | sed -E 's/[[:space:]]+$//')
-        fi
-
-        echo "${clean:-NVIDIA GPU} [Dedicated]"
-        return
-    fi
-
-    # ------------------------------------------------------------
-    # Intel
-    # ------------------------------------------------------------
-    if printf '%s\n' "$line" | grep -qi 'Intel'; then
-        clean=$(printf '%s\n' "$line" \
-            | grep -oE '\[[^]]+\]' \
-            | grep -Evi 'Intel|Corporation' \
-            | head -n1 \
-            | tr -d '[]' \
-            | sed -E 's/[[:space:]]+$//')
-
-        if [ -z "$clean" ]; then
-            clean=$(printf '%s\n' "$line" \
-                | sed -E 's/.*Intel Corporation[[:space:]]*//' \
-                | sed -E 's/[[:space:]]*\[.*//' \
-                | sed -E 's/[[:space:]]+$//')
-        fi
-
-        case "$clean" in
-            *"Iris Plus Graphics"*) clean="Intel Iris Plus Graphics" ;;
-            *"Iris Xe Graphics"*)   clean="Intel Iris Xe Graphics"   ;;
-            *"UHD Graphics"*)       clean="Intel UHD Graphics"       ;;
-            *"HD Graphics"*)        clean="Intel HD Graphics"        ;;
-        esac
-
-        [ -z "$clean" ] && clean="Intel Graphics"
-        echo "$clean [Integrated]"
-        return
-    fi
-
-    # ------------------------------------------------------------
-    # AMD / ATI
-    # ------------------------------------------------------------
-    if printf '%s\n' "$line" | grep -Eqi 'AMD|ATI|Radeon'; then
-        local gpu_type=""
-
-        if printf '%s\n' "$line" | grep -Eqi 'RX [0-9]|Navi|RDNA'; then
-            gpu_type="[Dedicated]"
-        else
-            gpu_type="[Integrated]"
-        fi
-
-                clean=$(printf '%s\n' "$line" \
-            | grep -oE '\[[^]]+\]' \
-            | tr -d '[]' \
-            | grep -Evi '^(AMD|ATI|AMD/ATI|Advanced Micro Devices.*)$' \
-            | tail -n1 \
-            | sed -E 's/[[:space:]]+$//')
-
-                case "$clean" in
-            "AMD/ATI"|"AMD"|"ATI")
-                clean=""
-                ;;
-            "Radeon Vega Series / Radeon Vega Mobile Series" \
-            |"Radeon Vega Series"|"Radeon Vega Mobile Series" \
-            |"Radeon Graphics"|"Radeon Vega 7 Graphics"|"Radeon Vega 8 Graphics")
-                clean="Radeon Vega"
-                ;;
-        esac
-
-        if [ -z "$clean" ] || [ "$clean" = "Radeon Vega" ]; then
-            local cpu_model=""
-            if command -v lscpu >/dev/null 2>&1; then
-                cpu_model=$(lscpu 2>/dev/null \
-                    | awk -F: '/Model name:/ {gsub(/^[[:space:]]+/,"",$2); print $2; exit}')
-            fi
-
-            case "$cpu_model" in
-                *"Ryzen 3 2200U"*) clean="Radeon Vega 3"  ;;
-                *"Ryzen 3 3200U"*) clean="Radeon Vega 3"  ;;
-                *"Ryzen 5 2500U"*) clean="Radeon Vega 8"  ;;
-                *"Ryzen 5 3500U"*) clean="Radeon Vega 8"  ;;
-                *"Ryzen 5 3450U"*) clean="Radeon Vega 8"  ;;
-                *"Ryzen 5 7430U"*) clean="Radeon Vega 7"  ;;
-                *"Ryzen 7 2700U"*) clean="Radeon Vega 10" ;;
-                *"Ryzen 7 3700U"*) clean="Radeon Vega 10" ;;
-                *"Ryzen 7 7730U"*) clean="Radeon Vega 8"  ;;
-            esac
-        fi
-
-        if [ -z "$clean" ]; then
-            clean=$(printf '%s\n' "$line" | grep -oE 'Radeon RX [0-9A-Z]+' | head -n1)
-            [ -n "$clean" ] && gpu_type="[Dedicated]"
-        fi
-
-        [ -z "$clean" ] && clean="Radeon GPU"
-        echo "$clean $gpu_type"
-        return
-    fi
-
-    echo "GPU [Unknown]"
-}
-
-get_package_manager() {
-    if command -v pacman >/dev/null 2>&1; then
-        echo "pacman"
-    elif command -v apt >/dev/null 2>&1; then
-        echo "apt"
-    elif command -v dnf >/dev/null 2>&1; then
-        echo "dnf"
-    elif command -v zypper >/dev/null 2>&1; then
-        echo "zypper"
-    elif command -v xbps-install >/dev/null 2>&1; then
-        echo "xbps"
-    elif command -v apk >/dev/null 2>&1; then
-        echo "apk"
-    else
-        echo "Not detected"
-    fi
-}
-
-get_package_count() {
-    if command -v pacman >/dev/null 2>&1; then
-        pacman -Qq 2>/dev/null | wc -l
-    elif command -v dpkg-query >/dev/null 2>&1; then
-        dpkg-query -f '.\n' -W 2>/dev/null | wc -l
-    elif command -v dnf >/dev/null 2>&1; then
-        dnf list installed 2>/dev/null | tail -n +2 | wc -l
-    elif command -v rpm >/dev/null 2>&1; then
-        rpm -qa 2>/dev/null | wc -l
-    elif command -v xbps-query >/dev/null 2>&1; then
-        xbps-query -l 2>/dev/null | wc -l
-    elif command -v apk >/dev/null 2>&1; then
-        apk info 2>/dev/null | wc -l
-    else
-        echo "Not available"
-    fi
-}
-
-get_init() {
-    ps -p 1 -o comm= 2>/dev/null || echo "Not available"
-}
-
-get_de() {
-    echo "${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-Not detected}}"
-}
-
-get_arch() {
-    uname -m 2>/dev/null || echo "Not available"
-}
-
-get_filesystem() {
-    df -T / 2>/dev/null | awk 'NR==2 {print $2}'
-}
-
-get_display_server() {
-    echo "${XDG_SESSION_TYPE:-Not detected}"
-}
-
-get_audio_server() {
-    if pgrep -x pipewire >/dev/null 2>&1; then
-        echo "PipeWire"
-    elif pgrep -x pulseaudio >/dev/null 2>&1; then
-        echo "PulseAudio"
-    elif pgrep -x wireplumber >/dev/null 2>&1; then
-        echo "WirePlumber"
-    else
-        echo "Not detected"
-    fi
-}
-
-get_aur_helper() {
-    if command -v pacman >/dev/null 2>&1; then
-        if command -v paru >/dev/null 2>&1; then
-            echo "paru"
-        elif command -v yay >/dev/null 2>&1; then
-            echo "yay"
-        elif command -v pikaur >/dev/null 2>&1; then
-            echo "pikaur"
-        elif command -v trizen >/dev/null 2>&1; then
-            echo "trizen"
-        else
-            echo "Not detected"
-        fi
-    fi
-}
-
-OS_NAME="$(get_os)"
-HOST_NAME="$(get_host)"
-KERNEL_VER="$(get_kernel)"
-SHELL_NAME="$(get_shell)"
-CPU_MODEL="$(get_cpu_model)"
-CPU_CORES="$(get_cpu_cores)"
-CPU_THREADS="$(get_cpu_threads)"
-GPU_NAME="$(get_gpu)"
-PKG_MANAGER="$(get_package_manager)"
-PKG_COUNT="$(get_package_count)"
-INIT_SYSTEM="$(get_init)"
-DE_NAME="$(get_de)"
-ARCH_NAME="$(get_arch)"
-FILESYSTEM_NAME="$(get_filesystem)"
-DISPLAY_SERVER="$(get_display_server)"
-AUDIO_SERVER="$(get_audio_server)"
-AUR_HELPER="$(get_aur_helper)"
-
-# ------------------------------
-# Dynamic info helpers
-# ------------------------------
-get_time_now() {
-    date +"%H:%M:%S"
-}
-
-get_uptime_pretty() {
-    awk '{
-        total=int($1);
-        days=int(total/86400);
-        hours=int((total%86400)/3600);
-        mins=int((total%3600)/60);
-
-        if (days > 0)
-            printf "%dd %dh %dm", days, hours, mins;
-        else if (hours > 0)
-            printf "%dh %dm", hours, mins;
-        else
-            printf "%dm", mins;
-    }' /proc/uptime
-}
-
-get_cpu_freq() {
-    local freq=""
-    if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
-        freq=$(awk '{printf "%.0f MHz", $1/1000}' /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq)
-    elif [ -r /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq ]; then
-        freq=$(awk '{printf "%.0f MHz", $1/1000}' /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq)
-    elif grep -q "cpu MHz" /proc/cpuinfo 2>/dev/null; then
-        freq=$(awk -F: '/cpu MHz/ {gsub(/^[ \t]+/, "", $2); printf "%.0f MHz\n", $2; exit}' /proc/cpuinfo)
-    fi
-    echo "${freq:-Not available}"
-}
-
-get_cpu_temp() {
-    local temp_raw=""
-    local temp_c=""
-
-    for zone in /sys/class/thermal/thermal_zone*/temp; do
-        if [ -r "$zone" ]; then
-            temp_raw=$(cat "$zone" 2>/dev/null)
-            if [ -n "$temp_raw" ] && [ "$temp_raw" -gt 0 ] 2>/dev/null; then
-                temp_c=$((temp_raw / 1000))
-                echo "${temp_c}°C"
-                return
-            fi
-        fi
-    done
-
-    for hwmon in /sys/class/hwmon/hwmon*/temp1_input; do
-        if [ -r "$hwmon" ]; then
-            temp_raw=$(cat "$hwmon" 2>/dev/null)
-            if [ -n "$temp_raw" ] && [ "$temp_raw" -gt 0 ] 2>/dev/null; then
-                temp_c=$((temp_raw / 1000))
-                echo "${temp_c}°C"
-                return
-            fi
-        fi
-    done
-
-    echo "Not available"
-}
-
-get_cpu_usage() {
-    local cpu user nice system idle iowait irq softirq steal guest guest_nice
-    read -r cpu user nice system idle iowait irq softirq steal guest guest_nice < /proc/stat
-
-    local idle_now=$((idle + iowait))
-    local total_now=$((user + nice + system + idle + iowait + irq + softirq + steal))
-
-    if [ -z "$PREV_TOTAL" ]; then
-        PREV_TOTAL=$total_now
-        PREV_IDLE=$idle_now
-        CPU_USAGE="0.0"
-        CPU_USAGE_INT=0
-        return
-    fi
-
-    local diff_total=$((total_now - PREV_TOTAL))
-    local diff_idle=$((idle_now - PREV_IDLE))
-
-    if [ "$diff_total" -gt 0 ]; then
-        CPU_USAGE=$(awk -v dt="$diff_total" -v di="$diff_idle" 'BEGIN {printf "%.1f", ((dt-di)/dt)*100}')
-        CPU_USAGE_INT=$(awk -v v="$CPU_USAGE" 'BEGIN {printf "%d", v}')
-    else
-        CPU_USAGE="0.0"
-        CPU_USAGE_INT=0
-    fi
-
-    PREV_TOTAL=$total_now
-    PREV_IDLE=$idle_now
-}
-
-get_ram_values() {
-    free -b 2>/dev/null | awk '/^Mem:/ {print $2, $3}'
-}
-
-get_swap_values() {
-    free -b 2>/dev/null | awk '/^Swap:/ {print $2, $3}'
+repeat() {
+    local n=$1 char=$2
+    printf -v REPLY '%*s' "$n" ''
+    REPLY=${REPLY// /$char}
 }
 
 human_bytes() {
-    awk -v bytes="$1" '
-    BEGIN {
-        split("B K M G T", unit)
-        i = 1
-        value = bytes
-
-        while (value >= 1024 && i < 5) {
-            value /= 1024
-            i++
-        }
-
-        if (i == 1)
-            printf "%d%s", value, unit[i]
-        else
-            printf "%.1f%s", value, unit[i]
-    }'
-}
-
-# ------------------------------
-# Bar builder
-# ------------------------------
-make_bar() {
-    local percent="$1"
-    local width="${2:-$BAR_WIDTH}"
-    local color="$3"
-
-    [ "$percent" -lt 0 ] && percent=0
-    [ "$percent" -gt 100 ] && percent=100
-
-    local filled=$(( percent * width / 100 ))
-    local empty=$(( width - filled ))
-    local bar_filled=""
-    local bar_empty=""
-
-    if [ "$filled" -gt 0 ]; then
-        bar_filled=$(printf '%*s' "$filled" '' | tr ' ' '#')
-    fi
-
-    if [ "$empty" -gt 0 ]; then
-        bar_empty=$(printf '%*s' "$empty" '' | tr ' ' '-')
-    fi
-
-    printf "${color}[%s%s]${RESET}" "$bar_filled" "$bar_empty"
-}
-
-# ------------------------------
-# Drawing helpers
-# ------------------------------
-line() {
-    printf "${GREEN}────────────────────────────────────────────────────────${RESET}\n"
-}
-
-header() {
-    printf "${RED}█████   █████  ████████  █████  ███████ ███████ ████████  ██████ ██  ██${RESET}\n"
-    printf "${RED}██  ██ ██   ██    ██    ██   ██ ██      ██         ██    ██      ██  ██${RESET}\n"
-    printf "${RED}██  ██ ███████    ██    ███████ █████   █████      ██    ██      ██████${RESET}\n"
-    printf "${RED}██  ██ ██   ██    ██    ██   ██ ██      ██         ██    ██      ██  ██${RESET}\n"
-    printf "${RED}█████  ██   ██    ██    ██   ██ ██      ███████    ██     ██████ ██  ██${RESET}\n"
-    printf "\n"
-    printf "${ORANGE} Live System Dashboard${RESET}   v2.3.2  |  Klod Cripta\n"
-    printf "${RED}────────────────────────────────────────────────────────${RESET}\n\n"
-}
-
-# ------------------------------
-# Main loop
-# ------------------------------
-tput civis 2>/dev/null
-clear
-
-while true; do
-    TIME_NOW="$(get_time_now)"
-    UPTIME_NOW="$(get_uptime_pretty)"
-    get_cpu_usage
-    CPU_FREQ_NOW="$(get_cpu_freq)"
-    CPU_TEMP_NOW="$(get_cpu_temp)"
-
-    read -r RAM_TOTAL RAM_USED <<< "$(get_ram_values)"
-    read -r SWAP_TOTAL SWAP_USED <<< "$(get_swap_values)"
-
-    if [ -n "$RAM_TOTAL" ] && [ "$RAM_TOTAL" -gt 0 ]; then
-        RAM_PERCENT=$(( 100 * RAM_USED / RAM_TOTAL ))
-        RAM_USED_HUMAN="$(human_bytes "$RAM_USED")"
-        RAM_TOTAL_HUMAN="$(human_bytes "$RAM_TOTAL")"
+    local value=${1:-0} divisor=1 unit=0 tenths
+    local units=(B KiB MiB GiB TiB PiB)
+    unsigned "$value" || value=0
+    while ((value/divisor >= 1024 && unit < 5)); do
+        divisor=$((divisor*1024)); ((unit+=1))
+    done
+    if ((unit == 0)); then REPLY="$value B"
     else
-        RAM_PERCENT=0
-        RAM_USED_HUMAN="Not available"
-        RAM_TOTAL_HUMAN="Not available"
+        tenths=$(((value*10 + divisor/2)/divisor))
+        printf -v REPLY '%d.%d %s' "$((tenths/10))" "$((tenths%10))" "${units[unit]}"
     fi
+}
 
-    if [ -n "$SWAP_TOTAL" ] && [ "$SWAP_TOTAL" -gt 0 ]; then
-        SWAP_PERCENT=$(( 100 * SWAP_USED / SWAP_TOTAL ))
-        SWAP_USED_HUMAN="$(human_bytes "$SWAP_USED")"
-        SWAP_TOTAL_HUMAN="$(human_bytes "$SWAP_TOTAL")"
+clock_sample() {
+    local stamp rest seconds fraction
+    read -r stamp rest < /proc/uptime
+    seconds=${stamp%%.*}; fraction=${stamp#*.}00; fraction=${fraction:0:2}
+    NOW_CS=$((10#$seconds*100 + 10#$fraction))
+    if ((seconds >= 86400)); then
+        printf -v UPTIME '%dd %dh %dm' "$((seconds/86400))" "$((seconds%86400/3600))" "$((seconds%3600/60))"
+    elif ((seconds >= 3600)); then
+        printf -v UPTIME '%dh %dm' "$((seconds/3600))" "$((seconds%3600/60))"
+    else UPTIME="$((seconds/60))m"; fi
+}
+
+read_cpu() {
+    local file=${1:-/proc/stat} cpu user nice system idle iowait irq softirq steal rest total idle_sum dt di tenths
+    read -r cpu user nice system idle iowait irq softirq steal rest < "$file" || return 0
+    # user/nice already contain guest time; do not count guest/guest_nice twice.
+    total=$((user+nice+system+idle+${iowait:-0}+${irq:-0}+${softirq:-0}+${steal:-0}))
+    idle_sum=$((idle+${iowait:-0}))
+    CPU_PERCENT=''
+    if [[ -n $PREV_CPU_TOTAL ]]; then
+        dt=$((total-PREV_CPU_TOTAL)); di=$((idle_sum-PREV_CPU_IDLE))
+        if ((dt > 0)); then
+            tenths=$(((dt-di)*1000/dt))
+            ((tenths < 0)) && tenths=0
+            ((tenths > 1000)) && tenths=1000
+            printf -v CPU_PERCENT '%d.%d' "$((tenths/10))" "$((tenths%10))"
+        fi
+    fi
+    PREV_CPU_TOTAL=$total PREV_CPU_IDLE=$idle_sum
+}
+
+read_memory() {
+    local file=${1:-/proc/meminfo} key val unit available='' free=0 buffers=0 cached=0 reclaim=0 shmem=0 swap_free=0
+    RAM_TOTAL=0 RAM_USED=0 RAM_PERCENT=0 SWAP_TOTAL=0 SWAP_USED=0 SWAP_PERCENT=0
+    while read -r key val unit; do
+        unsigned "$val" || continue
+        case $key in
+            MemTotal:) RAM_TOTAL=$((val*1024)) ;;
+            MemAvailable:) available=$((val*1024)) ;;
+            MemFree:) free=$val ;; Buffers:) buffers=$val ;; Cached:) cached=$val ;;
+            SReclaimable:) reclaim=$val ;; Shmem:) shmem=$val ;;
+            SwapTotal:) SWAP_TOTAL=$((val*1024)) ;; SwapFree:) swap_free=$((val*1024)) ;;
+        esac
+    done < "$file"
+    [[ -n $available ]] || available=$(((free+buffers+cached+reclaim-shmem)*1024))
+    ((available < 0)) && available=0
+    ((available > RAM_TOTAL)) && available=$RAM_TOTAL
+    RAM_USED=$((RAM_TOTAL-available))
+    ((RAM_TOTAL > 0)) && RAM_PERCENT=$((RAM_USED*100/RAM_TOTAL))
+    SWAP_USED=$((SWAP_TOTAL-swap_free))
+    ((SWAP_USED < 0)) && SWAP_USED=0
+    ((SWAP_TOTAL > 0)) && SWAP_PERCENT=$((SWAP_USED*100/SWAP_TOTAL))
+    return 0
+}
+
+# Select CPU-labelled sensors, never the first disk/GPU/ACPI temperature.
+# Prefer physical Tdie over offset Tctl when both are exported by k10temp.
+detect_temperature() {
+    local hwroot=${1:-/sys/class/hwmon} throot=${2:-/sys/class/thermal} h driver input label selected priority best
+    CPU_TEMP_FILES=()
+    for h in "$hwroot"/hwmon*; do
+        read_value "$h/name"; driver=$REPLY
+        case $driver in coretemp|k10temp|k8temp|zenpower|cpu_thermal|cpu-thermal|soc_thermal) ;; *) continue ;; esac
+        selected='' best=0
+        for input in "$h"/temp*_input; do
+            [[ -r $input ]] || continue
+            read_value "${input%_input}_label"; label=$REPLY
+            priority=1
+            case $label in Tdie|'Package id '*|Tccd*|CPU*) priority=3 ;; Tctl) priority=2 ;; esac
+            [[ $label == Tccd* ]] && priority=1
+            if ((priority > best)); then selected=$input best=$priority; fi
+        done
+        [[ -n $selected ]] && CPU_TEMP_FILES+=("$selected")
+    done
+    ((${#CPU_TEMP_FILES[@]})) && return 0
+    for h in "$throot"/thermal_zone*; do
+        read_value "$h/type"
+        case $REPLY in x86_pkg_temp|cpu-thermal|cpu_thermal|soc_thermal|*CPU*)
+            [[ -r $h/temp ]] && CPU_TEMP_FILES+=("$h/temp") ;;
+        esac
+    done
+    return 0
+}
+
+read_temperature() {
+    local input value hottest=-1 tenths
+    CPU_TEMP=''
+    for input in "${CPU_TEMP_FILES[@]}"; do
+        read_value "$input"; value=$REPLY
+        unsigned "$value" || continue
+        ((value > 0 && value < 200000 && value > hottest)) && hottest=$value
+    done
+    if ((hottest >= 0)); then
+        tenths=$(((hottest+50)/100))
+        printf -v CPU_TEMP '%d.%d' "$((tenths/10))" "$((tenths%10))"
+        if [[ -z $CPU_PEAK ]] || ((hottest > CPU_PEAK)); then CPU_PEAK=$hottest; fi
+    fi
+}
+
+read_frequency() {
+    local key val
+    CPU_FREQ=''
+    read_value /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq
+    if unsigned "$REPLY"; then
+        CPU_FREQ="$((REPLY/1000)) MHz"
     else
-        SWAP_PERCENT=0
-        SWAP_USED_HUMAN="0.0G"
-        SWAP_TOTAL_HUMAN="0.0G"
+        while IFS=: read -r key val; do
+            if [[ $key == 'cpu MHz'* ]]; then
+                val=${val//[[:space:]]/}; CPU_FREQ="${val%%.*} MHz"; break
+            fi
+        done < /proc/cpuinfo
     fi
+}
 
-    if ! check_terminal_size; then
-        sleep 1
-        continue
+network_sample() {
+    local now=$1 rx=$2 tx=$3 iface=$4 elapsed
+    RX_RATE=0 TX_RATE=0
+    if [[ -n $PREV_NET_TIME && $iface == "$PREV_NET_IFACE" ]]; then
+        elapsed=$((now-PREV_NET_TIME))
+        if ((elapsed > 0 && rx >= PREV_RX && tx >= PREV_TX)); then
+            RX_RATE=$(((rx-PREV_RX)*100/elapsed))
+            TX_RATE=$(((tx-PREV_TX)*100/elapsed))
+        fi
     fi
+    PREV_NET_TIME=$now PREV_RX=$rx PREV_TX=$tx PREV_NET_IFACE=$iface
+}
 
-        if [ "$_NEEDS_CLEAR" -eq 1 ]; then
-        clear
-        _NEEDS_CLEAR=0
+select_interface() {
+    local iface dest gateway flags rest candidate='' path
+    NET_IFACE=$REQUESTED_INTERFACE
+    [[ -n $NET_IFACE ]] && return 0
+    # /proc route tables are local reads, not probes to an outside service.
+    if [[ -r /proc/net/route ]]; then
+        while read -r iface dest gateway flags rest; do
+            if [[ $dest == 00000000 && $flags =~ ^[[:xdigit:]]+$ ]] && ((16#$flags & 1)); then
+                [[ -r /sys/class/net/$iface/statistics/rx_bytes ]] && { NET_IFACE=$iface; return 0; }
+            fi
+        done < /proc/net/route
+    fi
+    if [[ -r /proc/net/ipv6_route ]]; then
+        while read -r dest flags rest; do
+            iface=${rest##* }
+            if [[ $dest == 00000000000000000000000000000000 && $flags == 00 && $iface != lo && -d /sys/class/net/$iface ]]; then
+                NET_IFACE=$iface; return 0
+            fi
+        done < /proc/net/ipv6_route
+    fi
+    for path in /sys/class/net/*; do
+        iface=${path##*/}; [[ $iface == lo ]] && continue
+        read_value "$path/operstate"
+        [[ $REPLY == up ]] && { candidate=$iface; break; }
+    done
+    NET_IFACE=$candidate
+}
+
+read_network() {
+    local rx tx
+    select_interface
+    RX_RATE=0 TX_RATE=0
+    if [[ -n $NET_IFACE ]]; then
+        read_value "/sys/class/net/$NET_IFACE/statistics/rx_bytes"; rx=$REPLY
+        read_value "/sys/class/net/$NET_IFACE/statistics/tx_bytes"; tx=$REPLY
+        if unsigned "$rx" && unsigned "$tx"; then
+            network_sample "$NOW_CS" "$rx" "$tx" "$NET_IFACE"
+            return
+        fi
+    fi
+    PREV_NET_TIME='' PREV_NET_IFACE=''
+}
+
+read_disk() {
+    local fs total used available percent mount
+    DISK_TOTAL=0 DISK_USED=0 DISK_FREE=0 DISK_PERCENT=0
+    while read -r fs total used available percent mount; do
+        unsigned "$total" && unsigned "$used" && unsigned "$available" || continue
+        DISK_TOTAL=$((total*1024)); DISK_USED=$((used*1024)); DISK_FREE=$((available*1024))
+        percent=${percent%%%}; unsigned "$percent" && DISK_PERCENT=$percent
+    done < <(LC_ALL=C df -Pk / 2>/dev/null)
+}
+
+# The first present system battery is selected; its name is always displayed.
+# Do not combine charge (Ah) and energy (Wh) when calculating battery health.
+read_battery() {
+    local root=${1:-/sys/class/power_supply} b full design power current voltage
+    BAT_NAME='' BAT_PERCENT='' BAT_STATUS='' BAT_HEALTH='' BAT_POWER=''
+    for b in "$root"/*; do
+        read_value "$b/type"; [[ $REPLY == Battery ]] || continue
+        read_value "$b/present"; [[ $REPLY == 0 ]] && continue
+        read_value "$b/scope"; [[ $REPLY == Device ]] && continue
+        BAT_NAME=${b##*/}
+        read_value "$b/capacity"; unsigned "$REPLY" && BAT_PERCENT=$REPLY
+        [[ -n $BAT_PERCENT ]] && ((BAT_PERCENT > 100)) && BAT_PERCENT=100
+        read_value "$b/status"; BAT_STATUS=${REPLY:-Unknown}
+        read_value "$b/energy_full"; full=$REPLY
+        read_value "$b/energy_full_design"; design=$REPLY
+        if ! unsigned "$full" || ! unsigned "$design" || ((design == 0)); then
+            read_value "$b/charge_full"; full=$REPLY
+            read_value "$b/charge_full_design"; design=$REPLY
+        fi
+        if unsigned "$full" && unsigned "$design" && ((design > 0)); then BAT_HEALTH=$((full*100/design)); fi
+        read_value "$b/power_now"; power=${REPLY#-}
+        if ! unsigned "$power"; then
+            # Sysfs permits negative current while discharging. Display the
+            # magnitude in watts; BAT_STATUS supplies the charge direction.
+            read_value "$b/current_now"; current=${REPLY#-}
+            read_value "$b/voltage_now"; voltage=$REPLY
+            if unsigned "$current" && unsigned "$voltage"; then power=$((current*voltage/1000000)); fi
+        fi
+        if unsigned "$power"; then
+            power=$(((power+50000)/100000))
+            printf -v BAT_POWER '%d.%d' "$((power/10))" "$((power%10))"
+        fi
+        break
+    done
+}
+
+get_packages() {
+    local count='' pkg path
+    PKG_MANAGER='n/a' PKG_COUNT='n/a' AUR_HELPERS='' FLATPAK_COUNT=''
+    if command -v pacman >/dev/null 2>&1; then PKG_MANAGER=pacman; count=$(pacman -Qq 2>/dev/null | wc -l)
+    elif command -v dpkg-query >/dev/null 2>&1; then PKG_MANAGER=dpkg; count=$(dpkg-query -W -f='${db:Status-Status}\n' 2>/dev/null | LC_ALL=C awk '$0=="installed"{n++} END{print n+0}')
+    elif [[ -d /var/db/pkg ]] && command -v emerge >/dev/null 2>&1; then
+        PKG_MANAGER=Portage; count=0
+        for path in /var/db/pkg/*/*; do [[ -d $path ]] && ((count+=1)); done
+    elif command -v rpm >/dev/null 2>&1; then PKG_MANAGER=rpm; count=$(rpm -qa 2>/dev/null | wc -l)
+    elif command -v xbps-query >/dev/null 2>&1; then PKG_MANAGER=xbps; count=$(xbps-query -l 2>/dev/null | wc -l)
+    elif command -v apk >/dev/null 2>&1; then PKG_MANAGER=apk; count=$(apk info 2>/dev/null | wc -l)
+    fi
+    count=${count//[[:space:]]/}; [[ -n $count ]] && PKG_COUNT=$count
+    if [[ $PKG_MANAGER == pacman ]]; then
+        for pkg in paru yay pikaur aura trizen pakku; do
+            command -v "$pkg" >/dev/null 2>&1 && AUR_HELPERS+="${AUR_HELPERS:+, }$pkg"
+        done
+    fi
+    if command -v flatpak >/dev/null 2>&1; then
+        FLATPAK_COUNT=$(flatpak list --app --columns=application 2>/dev/null | wc -l)
+        FLATPAK_COUNT=${FLATPAK_COUNT//[[:space:]]/}
+    fi
+}
+
+get_gpus() {
+    local line name path driver id
+    GPU_NAMES=()
+    if command -v lspci >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            case $line in
+                *'VGA compatible controller: '*|*'3D controller: '*|*'Display controller: '*)
+                    name=${line#*controller: }; name=${name% (rev *}
+                    name=${name/Advanced Micro Devices, Inc. /}
+                    name=${name/NVIDIA Corporation /NVIDIA }
+                    name=${name/Intel Corporation /Intel }
+                    GPU_NAMES+=("$name") ;;
+            esac
+        done < <(LC_ALL=C lspci 2>/dev/null)
+    fi
+    if ((${#GPU_NAMES[@]} == 0)); then
+        for path in /sys/class/drm/card*/device; do
+            [[ ${path%/device} =~ /card[0-9]+$ ]] || continue
+            read_value "$path/vendor"; id=$REPLY
+            case $id in 0x1002) name='AMD GPU' ;; 0x8086) name='Intel GPU' ;; 0x10de) name='NVIDIA GPU' ;; *) name='GPU' ;; esac
+            driver=$(readlink "$path/driver" 2>/dev/null); driver=${driver##*/}
+            [[ -n $driver ]] && name+=" ($driver)"
+            GPU_NAMES+=("$name")
+        done
+    fi
+    GPU_NAME='n/a'
+    if ((${#GPU_NAMES[@]})); then
+        GPU_NAME=${GPU_NAMES[0]}
+        ((${#GPU_NAMES[@]} > 1)) && GPU_NAME+=" (+$((${#GPU_NAMES[@]}-1)) GPU)"
+    fi
+}
+
+collect_static() {
+    local key val info pid1 sockets=1 cores='' threads='' name path
+    OS_NAME='Linux'
+    if [[ -r /etc/os-release ]]; then
+        OS_NAME=$(. /etc/os-release; printf '%s' "${PRETTY_NAME:-${NAME:-Linux}}")
+    fi
+    read_value /proc/sys/kernel/hostname; HOST_NAME=${REPLY:-unknown}
+    KERNEL_VER=$(uname -r); ARCH_NAME=$(uname -m)
+    SHELL_NAME=${SHELL##*/}; SHELL_NAME=${SHELL_NAME:-n/a}
+    DE_NAME=${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-n/a}}
+    DISPLAY_SERVER=${XDG_SESSION_TYPE:-n/a}
+    [[ $DISPLAY_SERVER == n/a && -n ${WAYLAND_DISPLAY:-} ]] && DISPLAY_SERVER=wayland
+    [[ $DISPLAY_SERVER == n/a && -n ${DISPLAY:-} ]] && DISPLAY_SERVER=x11
+    CPU_MODEL='' CPU_CORES='n/a' CPU_THREADS='n/a'
+    if command -v lscpu >/dev/null 2>&1; then
+        while IFS=: read -r key val; do
+            val=${val#"${val%%[![:space:]]*}"}
+            case $key in
+                'Model name') CPU_MODEL=$val ;;
+                'CPU(s)') threads=$val ;;
+                'Core(s) per socket') cores=$val ;;
+                'Socket(s)') sockets=$val ;;
+            esac
+        done < <(LC_ALL=C lscpu 2>/dev/null)
+        unsigned "$threads" && CPU_THREADS=$threads
+        unsigned "$cores" && unsigned "$sockets" && CPU_CORES=$((cores*sockets))
+    fi
+    if [[ -z $CPU_MODEL ]]; then
+        while IFS=: read -r key val; do
+            if [[ $key == 'model name'* || $key == Hardware* ]]; then
+                CPU_MODEL=${val#"${val%%[![:space:]]*}"}; break
+            fi
+        done < /proc/cpuinfo
+    fi
+    CPU_MODEL=${CPU_MODEL:-$ARCH_NAME}
+    CPU_MODEL=${CPU_MODEL//(R)/}; CPU_MODEL=${CPU_MODEL//(TM)/}
+    CPU_MODEL=${CPU_MODEL% with Radeon Graphics}
+    get_gpus
+    get_packages
+    pid1=$(ps -p 1 -o comm= 2>/dev/null); INIT_SYSTEM=${pid1:-n/a}
+    if [[ $pid1 == openrc-init || -d /run/openrc/started ]]; then INIT_SYSTEM=OpenRC; fi
+    AUDIO_SERVER='n/a'
+    if command -v pgrep >/dev/null 2>&1; then
+        if pgrep -x -u "$UID" pipewire >/dev/null 2>&1; then AUDIO_SERVER=PipeWire
+        elif pgrep -x -u "$UID" pulseaudio >/dev/null 2>&1; then AUDIO_SERVER=PulseAudio; fi
+    fi
+    FILESYSTEM_NAME=$(LC_ALL=C df -PT / 2>/dev/null | awk 'NR==2{print $2}')
+    read_value /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver; CPU_DRIVER=${REPLY:-n/a}
+    CPU_GOVERNOR='n/a'; CPU_EPP=''
+    detect_temperature
+}
+
+sample() {
+    clock_sample
+    read_cpu
+    read_memory
+    read_temperature
+    read_frequency
+    read_network
+    read_battery
+    read_value /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor; CPU_GOVERNOR=${REPLY:-n/a}
+    read_value /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference; CPU_EPP=$REPLY
+    if ((NOW_CS >= DISK_NEXT)); then read_disk; DISK_NEXT=$((NOW_CS+500)); fi
+    printf -v TIME_NOW '%(%H:%M:%S)T' -1
+    if [[ -n $CPU_PERCENT ]]; then
+        CPU_HISTORY+=("${CPU_PERCENT%.*}")
+        ((${#CPU_HISTORY[@]} > 40)) && CPU_HISTORY=("${CPU_HISTORY[@]: -40}")
+    fi
+}
+
+setup_style() {
+    local charmap
+    RESET='' BOLD='' ACCENT='' DIM='' GOOD='' WARN='' BAD=''
+    if [[ $COLOR_MODE == always || ($COLOR_MODE == auto && -t 1 && ! ${NO_COLOR+x} && ${TERM:-dumb} != dumb) ]]; then
+        RESET=$'\e[0m'; BOLD=$'\e[1m'; ACCENT=$'\e[36m'; DIM=$'\e[90m'; GOOD=$'\e[32m'; WARN=$'\e[33m'; BAD=$'\e[31m'
+        case ${TERM:-} in *256color*|*direct*|xterm-kitty|foot*)
+            ACCENT=$'\e[38;5;81m'; DIM=$'\e[38;5;245m'; GOOD=$'\e[38;5;114m'; WARN=$'\e[38;5;215m'; BAD=$'\e[38;5;203m' ;;
+        esac
+    fi
+    BAR_ON='#' BAR_OFF='-' RULE_CHAR='-' MARK='>' DEG=C
+    charmap=$(locale charmap 2>/dev/null)
+    if ((ASCII == 0)) && [[ $charmap == UTF-8 || $charmap == UTF8 ]]; then
+        BAR_ON='━'; BAR_OFF='─'; RULE_CHAR='─'; MARK='●'; DEG='°C'
+    fi
+}
+
+get_size() {
+    local size rows cols
+    if ((ACTIVE)); then
+        size=$(stty size <&3 2>/dev/null)
+        read -r rows cols <<< "$size"
+    else rows=1000; cols=${COLUMNS:-80}; fi
+    unsigned "${cols:-}" && ((cols >= 2 && cols <= 1000)) || cols=80
+    unsigned "${rows:-}" && ((rows >= 2 && rows <= 1000)) || rows=24
+    if ((ONCE)); then
+        ((REQUESTED_WIDTH > 0)) && cols=$REQUESTED_WIDTH
+        ((cols < 48)) && cols=48
+    fi
+    COLS=$cols ROWS=$rows
+    WIDTH=$((cols-3))
+    ((ONCE)) && WIDTH=$((cols-2))
+    ((WIDTH > 106 && REQUESTED_WIDTH == 0)) && WIDTH=106
+    ((REQUESTED_WIDTH > 0 && REQUESTED_WIDTH-2 < WIDTH)) && WIDTH=$((REQUESTED_WIDTH-2))
+    ((WIDTH < 1)) && WIDTH=1
+    SMALL=$COMPACT
+    ((WIDTH < 69 || rows < 23)) && SMALL=1
+}
+
+add_row() {
+    local text=$1 style=${2:-} count=${3:-$WIDTH}
+    fit "$count" "$text"
+    FRAME+=("  $style$REPLY$RESET")
+}
+
+blank_row() { add_row ''; }
+
+rule() { repeat "$WIDTH" "$RULE_CHAR"; add_row "$REPLY" "$DIM"; }
+
+pair_row() {
+    local left=$1 right=$2 left_width=$((WIDTH/2)) a
+    fit "$left_width" "$left"; a=$REPLY
+    add_row "$a$right"
+}
+
+section() { add_row "$1" "$ACCENT$BOLD"; }
+
+metric() {
+    local label=$1 pct=$2 note=$3 length filled empty bar tail color suffix a n
+    length=18; ((SMALL)) && length=10
+    n=${pct%.*}; [[ -n $n ]] || n=0
+    ((n < 0)) && n=0; ((n > 100)) && n=100
+    color=$GOOD; ((n >= 75)) && color=$WARN; ((n >= 90)) && color=$BAD
+    if [[ $label == BAT ]]; then
+        color=$GOOD
+        if [[ $BAT_STATUS == Discharging ]]; then
+            ((n < 30)) && color=$WARN
+            ((n < 15)) && color=$BAD
+        fi
+    fi
+    filled=$((n*length/100)); empty=$((length-filled))
+    repeat "$filled" "$BAR_ON"; bar=$REPLY
+    repeat "$empty" "$BAR_OFF"; tail=$REPLY
+    fit 6 "$label"; a=$REPLY
+    if [[ -n $pct ]]; then printf -v suffix '%5s%%' "$pct"; else suffix='   n/a'; fi
+    fit "$((WIDTH-6-length-9))" "$note"; note=$REPLY
+    FRAME+=("  $DIM$a$RESET$color$bar$DIM$tail$RESET $BOLD$suffix$RESET  $note")
+}
+
+memory_note() {
+    local used=$1 total=$2 a
+    human_bytes "$used"; a=$REPLY
+    human_bytes "$total"; REPLY="$a / $REPLY"
+}
+
+history_row() {
+    local value level text='' glyphs=' .:-=+*#%@' i
+    [[ $BAR_ON == '━' ]] && glyphs='▁▂▃▄▅▆▇█'
+    for value in "${CPU_HISTORY[@]}"; do
+        level=$((value*(${#glyphs}-1)/100)); text+=${glyphs:level:1}
+    done
+    add_row "CPU history  $text" "$DIM"
+}
+
+build_frame() {
+    local status tag note info raw_peak gpu_text name
+    FRAME=()
+    if ((ACTIVE && (COLS < 48 || ROWS < 16))); then
+        add_row 'DATAFETCH' "$ACCENT$BOLD"
+        add_row 'Terminal too small.'
+        add_row 'Minimum: 48 columns x 16 rows.' "$DIM"
+        add_row 'Resize the window. Press q to exit.' "$DIM"
+        return
+    fi
+    status="${MARK} LIVE  ${INTERVAL}s"
+    ((PAUSED)) && status="${MARK} PAUSED"
+    ((ONCE)) && status='SNAPSHOT'
+    fit "$((WIDTH-${#status}))" 'DATAFETCH'; tag=$REPLY
+    FRAME+=("  $ACCENT$BOLD$tag$RESET$GOOD$status$RESET")
+    add_row "System overview  /  $VERSION  /  Klod Cripta" "$DIM"
+    ((SMALL == 0)) && rule
+    if ((DETAILS)); then
+        section 'SYSTEM / DETAILS'
+        add_row "PACKAGES  $PKG_COUNT ($PKG_MANAGER)${FLATPAK_COUNT:+  /  $FLATPAK_COUNT Flatpak apps}"
+        pair_row "SHELL  $SHELL_NAME" "INIT  $INIT_SYSTEM"
+        pair_row "AUDIO  $AUDIO_SERVER" "ROOT FS  ${FILESYSTEM_NAME:-n/a}"
+        ((SMALL == 0)) && add_row "CPU DRIVER  $CPU_DRIVER"
+        add_row "GOVERNOR  $CPU_GOVERNOR${CPU_EPP:+  /  $CPU_EPP}"
+        if ((SMALL == 0)); then
+            if [[ -n $AUR_HELPERS ]]; then add_row "AUR  $AUR_HELPERS"
+            else add_row "ARCH  $ARCH_NAME  /  $CPU_CORES cores  /  $CPU_THREADS threads"; fi
+            gpu_text=''
+            for name in "${GPU_NAMES[@]}"; do gpu_text+="${gpu_text:+; }$name"; done
+            add_row "GPU  ${gpu_text:-n/a}"
+        fi
+    elif ((SMALL)); then
+        add_row "$OS_NAME" "$BOLD"
+        add_row "CPU  $CPU_MODEL"
+        add_row "GPU  $GPU_NAME"
     else
-        tput cup 0 0
-        tput ed
+        section 'SYSTEM'
+        add_row "$OS_NAME" "$BOLD"
+        pair_row "HOST     $HOST_NAME" "UPTIME   $UPTIME"
+        add_row "KERNEL   $KERNEL_VER"
+        pair_row "DESKTOP  $DE_NAME" "SESSION  $DISPLAY_SERVER"
+        add_row "CPU      $CPU_MODEL"
+        add_row "GPU      $GPU_NAME"
+        add_row "$CPU_CORES cores  /  $CPU_THREADS threads  /  $ARCH_NAME" "$DIM"
     fi
-    header
-
-    printf " Host: %-24s Time: %s\n" "$HOST_NAME" "$TIME_NOW"
-    printf " OS: %-26s Uptime: %s\n" "$OS_NAME" "$UPTIME_NOW"
-    printf " Kernel: %-22s Shell: %s\n" "$KERNEL_VER" "$SHELL_NAME"
-
-    line
-    printf "${RED}CPU${RESET}\n"
-    printf " Model: %s\n" "$CPU_MODEL"
-    printf " Cores: %s / Threads: %s\n" "$CPU_CORES" "$CPU_THREADS"
-    printf " Frequency: %s\n" "$CPU_FREQ_NOW"
-    printf " Temperature: ${GREEN}%s${RESET}\n" "$CPU_TEMP_NOW"
-    printf " Usage: %-5s%% %24b\n" "$CPU_USAGE" "$(make_bar "$CPU_USAGE_INT" "$BAR_WIDTH" "$GREEN")"
-
-    line
-    printf "${RED}MEMORY${RESET}\n"
-    printf " RAM: %-18s %24b\n" "$RAM_USED_HUMAN / $RAM_TOTAL_HUMAN" "$(make_bar "$RAM_PERCENT" "$BAR_WIDTH" "$GREEN")"
-    printf " Usage: %s%%\n" "$RAM_PERCENT"
-    printf "\n"
-    printf " Swap: %-17s %24b\n" "$SWAP_USED_HUMAN / $SWAP_TOTAL_HUMAN" "$(make_bar "$SWAP_PERCENT" "$BAR_WIDTH" "$GREEN")"
-    printf " Usage: %s%%\n" "$SWAP_PERCENT"
-
-    line
-    printf "${RED}SYSTEM${RESET}\n"
-    printf " GPU: %s\n" "$GPU_NAME"
-    printf " Display: %-18s Audio: %s\n" "$DISPLAY_SERVER" "$AUDIO_SERVER"
-    printf " Packages: %-17s Manager: %s\n" "$PKG_COUNT" "$PKG_MANAGER"
-    printf " DE: %-23s Init: %s\n" "$DE_NAME" "$INIT_SYSTEM"
-    printf " Arch: %-21s Filesystem: %s\n" "$ARCH_NAME" "$FILESYSTEM_NAME"
-    if [ -n "$AUR_HELPER" ]; then
-        printf " AUR Helper: %s\n" "$AUR_HELPER"
+    ((SMALL == 0)) && blank_row
+    section "LIVE METRICS  /  $TIME_NOW"
+    metric CPU "$CPU_PERCENT" "${CPU_FREQ:-n/a} (CPU0)"
+    if [[ -n $CPU_TEMP ]]; then
+        raw_peak=$(((CPU_PEAK+50)/100))
+        printf -v note '%s%s  /  peak %d.%d%s' "$CPU_TEMP" "$DEG" "$((raw_peak/10))" "$((raw_peak%10))" "$DEG"
+    else note='n/a'; fi
+    add_row "TEMP  $note" "$DIM"
+    memory_note "$RAM_USED" "$RAM_TOTAL"; metric RAM "$RAM_PERCENT" "$REPLY"
+    if ((SWAP_TOTAL)); then
+        memory_note "$SWAP_USED" "$SWAP_TOTAL"; metric SWAP "$SWAP_PERCENT" "$REPLY"
+    else metric SWAP '' 'Disabled'; fi
+    if ((DISK_TOTAL)); then
+        human_bytes "$DISK_FREE"; metric DISK "$DISK_PERCENT" "/  $REPLY free"
+    else metric DISK '' 'n/a'; fi
+    if [[ -n $NET_IFACE ]]; then
+        human_bytes "$RX_RATE"; note="down $REPLY/s"
+        human_bytes "$TX_RATE"; note+="  up $REPLY/s"
+        add_row "NET   $note  /  $NET_IFACE"
+    else add_row 'NET   No active interface' "$DIM"; fi
+    if [[ -n $BAT_NAME ]]; then
+        note="$BAT_NAME  $BAT_STATUS${BAT_POWER:+  ${BAT_POWER}W}"
+        ((SMALL == 0)) && [[ -n $BAT_HEALTH ]] && note+="  health ${BAT_HEALTH}%"
+        # Battery charge is a capacity, not a utilization warning.
+        metric BAT "${BAT_PERCENT:-}" "$note"
     fi
+    if ((SMALL == 0 && ROWS >= ${#FRAME[@]}+6)); then
+        blank_row
+        history_row
+    fi
+    if ((SMALL == 0)); then rule; fi
+    if ((ONCE)); then
+        add_row 'Snapshot / run without --once for the live dashboard' "$DIM"
+    elif ((SMALL)); then
+        add_row 'p pause  +/- speed  d details  q quit' "$DIM"
+    else
+        note='p pause'; ((PAUSED)) && note='p resume'
+        info='d details'; ((DETAILS)) && info='d overview'
+        add_row "$note   + / - refresh   $info   q quit" "$DIM"
+    fi
+}
 
-    line
-    printf " Press CTRL+C to exit\n"
+# Changed rows are padded and written in one packet. No erase-before-redraw,
+# no newline at the bottom edge, no repeated painting of the static header.
+render() {
+    local packet='' i row count=${#FRAME[@]} max=${#PREVIOUS_FRAME[@]} force=$RESIZE
+    RESIZE=0
+    ((count > max)) && max=$count
+    ((force)) && max=$ROWS
+    ((max > ROWS)) && max=$ROWS
+    for ((i=0;i<max;i++)); do
+        row=${FRAME[i]:-}
+        if ((force)) || [[ $row != "${PREVIOUS_FRAME[i]:-}" ]]; then
+            # EL clears only the unused tail after the new row has been written.
+            printf -v packet '%s\e[%d;1H%s\e[0K' "$packet" "$((i+1))" "$row"
+        fi
+    done
+    [[ -n $packet ]] && printf '%s' "$packet"
+    PREVIOUS_FRAME=("${FRAME[@]}")
+}
 
-    sleep 1
-done
+cleanup() {
+    if ((ACTIVE)); then
+        ACTIVE=0
+        [[ -n ${SAVED_STTY:-} ]] && stty "$SAVED_STTY" <&3 2>/dev/null
+        printf '\e[0m\e[?25h\e[?1049l'
+        exec 3<&-
+    fi
+}
+
+resize_terminal() { RESIZE=1; }
+
+suspend_terminal() {
+    if ((ACTIVE)); then
+        stty "$SAVED_STTY" <&3 2>/dev/null
+        printf '\e[0m\e[?25h\e[?1049l'
+        ACTIVE=0 SUSPENDED=1
+        # STOP is intentional: the TSTP handler has already restored the shell.
+        kill -STOP "$$"
+    fi
+}
+
+resume_terminal() {
+    if ((SUSPENDED)); then
+        ACTIVE=1 SUSPENDED=0
+        stty -echo -icanon min 1 time 0 <&3
+        printf '\e[?1049h\e[?25l'
+        PREV_CPU_TOTAL='' PREV_NET_TIME=''
+        RESIZE=1 NEXT_SAMPLE=0
+    fi
+}
+
+handle_key() {
+    case $1 in
+        q|Q|$'\004') return 1 ;;
+        p|P|' ')
+            PAUSED=$((1-PAUSED))
+            if ((PAUSED == 0)); then
+                PREV_CPU_TOTAL='' PREV_NET_TIME=''
+                sample
+                NEXT_SAMPLE=$((NOW_CS+INTERVAL_CS))
+            fi ;;
+        d|D) DETAILS=$((1-DETAILS)) ;;
+        +|=)
+            if ((INTERVAL_CS > 500)); then INTERVAL=5 INTERVAL_CS=500
+            elif ((INTERVAL_CS > 200)); then INTERVAL=2 INTERVAL_CS=200
+            elif ((INTERVAL_CS > 100)); then INTERVAL=1 INTERVAL_CS=100
+            else INTERVAL=0.5 INTERVAL_CS=50; fi
+            NEXT_SAMPLE=0 ;;
+        -|_)
+            if ((INTERVAL_CS < 100)); then INTERVAL=1 INTERVAL_CS=100
+            elif ((INTERVAL_CS < 200)); then INTERVAL=2 INTERVAL_CS=200
+            elif ((INTERVAL_CS < 500)); then INTERVAL=5 INTERVAL_CS=500
+            else INTERVAL=10 INTERVAL_CS=1000; fi
+            NEXT_SAMPLE=0 ;;
+    esac
+    return 0
+}
+
+main() {
+    local result key wait_cs wait_time dirty
+    parse_args "$@"; result=$?
+    ((result == 10)) && return 0
+    ((result != 0)) && return "$result"
+    [[ -r /proc/stat && -r /proc/meminfo && -r /proc/uptime ]] || { error 'Linux /proc is required'; return 1; }
+    if [[ ! -t 1 || ! -t 0 || ${TERM:-dumb} == dumb ]]; then ONCE=1; fi
+    setup_style
+    collect_static
+    sample
+    # Prime delta-based counters for a meaningful initial CPU/network sample.
+    sleep 0.12
+    sample
+    if ((ONCE)); then
+        get_size
+        build_frame
+        printf '%s\n' "${FRAME[@]}"
+        return 0
+    fi
+    exec 3<&0
+    SAVED_STTY=$(stty -g <&3 2>/dev/null) || { error 'Cannot read terminal settings'; return 1; }
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+    trap resize_terminal WINCH
+    trap suspend_terminal TSTP
+    trap resume_terminal CONT
+    ACTIVE=1
+    stty -echo -icanon min 1 time 0 <&3
+    printf '\e[?1049h\e[?25l'
+    get_size; build_frame; render
+    NEXT_SAMPLE=$((NOW_CS+INTERVAL_CS))
+    while :; do
+        dirty=0
+        clock_sample
+        wait_cs=$((NEXT_SAMPLE-NOW_CS))
+        ((PAUSED)) && wait_cs=100
+        ((wait_cs < 1)) && wait_cs=1
+        # Bash may resume read after WINCH. Bound the wait so resizing stays
+        # responsive even while paused or using a ten-second sample interval.
+        ((wait_cs > 20)) && wait_cs=20
+        printf -v wait_time '%d.%02d' "$((wait_cs/100))" "$((wait_cs%100))"
+        key=''
+        IFS= read -r -s -n 1 -t "$wait_time" -u 3 key
+        result=$?
+        if ((result == 0)); then
+            # read -n 1 can return an empty key for Enter; it is harmless.
+            handle_key "$key" || break
+            dirty=1
+        elif ((result == 1)); then
+            break  # EOF / closed terminal: do not spin.
+        fi
+        if ((RESIZE)); then get_size; dirty=1; fi
+        clock_sample
+        if ((PAUSED == 0 && NOW_CS >= NEXT_SAMPLE)); then
+            sample
+            NEXT_SAMPLE=$((NOW_CS+INTERVAL_CS))
+            dirty=1
+        fi
+        if ((dirty)); then build_frame; render; fi
+    done
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
