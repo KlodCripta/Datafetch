@@ -147,6 +147,53 @@ class DatafetchTests(unittest.TestCase):
         self.assertLessEqual(len(out.splitlines()), 16)
         self.assertIn('q quit', out.splitlines()[-1])
 
+    def test_gpu_names_prefer_marketing_label_and_keep_ambiguous_models(self):
+        cases = [
+            ('NVIDIA Corporation GA106 [GeForce RTX 3060 Lite Hash Rate] (rev a1)',
+             'NVIDIA GeForce RTX 3060 LHR'),
+            ('Intel Corporation Skylake GT2 [HD Graphics 520] (rev 07)',
+             'Intel HD Graphics 520'),
+            ('Advanced Micro Devices, Inc. [AMD/ATI] Navi 23 [Radeon RX 6600/6600 XT/6600M]',
+             'AMD Radeon RX 6600/6600 XT/6600M'),
+            ('Advanced Micro Devices, Inc. [AMD/ATI] Barcelo',
+             'AMD Radeon Graphics (7 CU)'),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(self.shell('normalize_gpu_name "$1" "AMD Ryzen 5 7430U"; printf "%s" "$REPLY"', raw), expected)
+
+    def test_gpu_codename_does_not_guess_an_unrelated_cpu_or_dedicated_gpu(self):
+        self.assertEqual(self.shell('normalize_gpu_name "$1" "AMD Ryzen 7 5825U"; printf "%s" "$REPLY"',
+                                   'Advanced Micro Devices, Inc. [AMD/ATI] Barcelo'),
+                         'AMD Radeon Graphics (Barcelo)')
+        self.assertEqual(self.shell('normalize_gpu_name "$1" "AMD Ryzen 5 7430U"; printf "%s" "$REPLY"',
+                                   'NVIDIA Corporation TU117M [GeForce GTX 1650 Mobile]'),
+                         'NVIDIA GeForce GTX 1650 Mobile')
+
+    def test_framed_views_fit_terminal_with_battery_and_details(self):
+        for cols, rows in [(48, 16), (56, 20), (80, 23), (80, 24), (104, 24), (110, 24), (160, 40)]:
+            for details in (0, 1):
+                with self.subTest(cols=cols, rows=rows, details=details):
+                    out = self.shell('collect_static; sample; COLS=$1; ROWS=$2; DETAILS=$3; '
+                                     'WIDTH=$((COLS-3)); SMALL=0; ((WIDTH<69 || ROWS<23)) && SMALL=1; '
+                                     'ACTIVE=1; GPU_NAMES=(); GPU_NAME=n/a; BAT_NAME=BAT0; BAT_PERCENT=70; BAT_STATUS=Charging; '
+                                     'BAT_POWER=12.3; BAT_HEALTH=94; COLOR_MODE=always; setup_style; '
+                                     'build_frame; printf "%s\\n" "${FRAME[@]}"', cols, rows, details)
+                    lines = ANSI.sub('', out).splitlines()
+                    self.assertLessEqual(len(lines), rows)
+                    self.assertTrue(all(len(line) < cols for line in lines))
+                    self.assertIn('q quit', lines[-1])
+                    for label in ('CPU', 'RAM', 'SWAP', 'DISK', 'NET', 'BAT'):
+                        self.assertIn(label, '\n'.join(lines))
+                    if not details or (cols >= 72 and rows >= 24):
+                        self.assertIn('GPU', '\n'.join(lines))
+                    self.assertTrue(any('LIVE METRICS' in line and ('╭' in line or '+' in line) for line in lines))
+                    if cols >= 104:
+                        self.assertTrue(any('SYSTEM' in line and 'LIVE METRICS' in line for line in lines))
+
+    def test_unicode_padding_uses_character_width_for_temperature(self):
+        self.assertEqual(self.shell('fit 12 "51.4°C"; printf "[%s]" "$REPLY"'), '[51.4°C      ]')
+
     def test_cpu_deltas_exclude_guest_double_counting(self):
         with tempfile.TemporaryDirectory() as d:
             a, b = Path(d)/'a', Path(d)/'b'

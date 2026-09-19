@@ -3,7 +3,7 @@
 # Copyright (c) 2024–2026 Klod Cripta. MIT License.
 # Bash 4.3+; Linux /proc and /sys. Optional tools enrich static information.
 
-VERSION='3.0.0-preview.1'
+VERSION='3.0.0-preview.2'
 INTERVAL=1
 INTERVAL_CS=100
 ONCE=0
@@ -34,8 +34,9 @@ CPU_FREQ=''
 NET_IFACE=''
 NOW_CS=0
 UPTIME=''
-RESET='' BOLD='' ACCENT='' DIM='' GOOD='' WARN='' BAD=''
+RESET='' BOLD='' TEXT='' ACCENT='' DIM='' BORDER='' GOOD='' WARN='' BAD=''
 BAR_ON='#' BAR_OFF='-' RULE_CHAR='-' MARK='>' DEG='C'
+BOX_TL='+' BOX_TR='+' BOX_BL='+' BOX_BR='+' BOX_V='|' UNICODE=0
 CPU_TEMP_FILES=()
 CPU_HISTORY=()
 FRAME=()
@@ -116,11 +117,14 @@ sanitize() {
 
 fit() {
     local width=$1 value=$2
+    ((width > 0)) || { REPLY=''; return; }
     sanitize "$value"; value=$REPLY
     if ((${#value} > width)); then
         value="${value:0:width-1}~"
     fi
-    printf -v REPLY '%-*s' "$width" "$value"
+    # printf's string field width counts bytes, including UTF-8 degree signs.
+    printf -v REPLY '%*s' "$((width-${#value}))" ''
+    REPLY="$value$REPLY"
 }
 
 repeat() {
@@ -383,6 +387,41 @@ get_packages() {
     fi
 }
 
+normalize_gpu_name() {
+    local name=$1 cpu=${2:-} vendor='' label rest
+    sanitize "$name"; name=${REPLY% (rev *}
+    case $name in
+        *'Advanced Micro Devices'*|*'[AMD/ATI]'*|AMD*) vendor=AMD ;;
+        *NVIDIA*) vendor=NVIDIA ;;
+        *Intel*) vendor=Intel ;;
+    esac
+    name=${name/Advanced Micro Devices, Inc. /}
+    name=${name/\[AMD\/ATI\] /}
+    name=${name/NVIDIA Corporation /}
+    name=${name/Intel Corporation /}
+    name=${name#"$vendor "}
+    # PCI databases often put the useful marketing name after a chip codename.
+    rest=$name
+    while [[ $rest == *'['*']'* ]]; do
+        label=${rest#*\[}; label=${label%%\]*}
+        case $label in
+            *GeForce*|*Quadro*|*RTX*|*Radeon*|*Graphics*|*Arc*) name=$label; break ;;
+        esac
+        rest=${rest#*\]}
+    done
+    if [[ $vendor == AMD && $name == Barcelo ]]; then
+        # AMD's 7430U specification: Radeon Graphics, seven graphics cores.
+        # Require the integrated PCI codename as well as the exact CPU model.
+        if [[ $cpu =~ (^|[[:space:]])7430U($|[[:space:]]) ]]; then
+            name='Radeon Graphics (7 CU)'
+        else name='Radeon Graphics (Barcelo)'; fi
+    fi
+    name=${name//Lite Hash Rate/LHR}
+    name=${name//(R)/}; name=${name//(TM)/}
+    name=${name#"$vendor "}
+    REPLY="${vendor:+$vendor }$name"
+}
+
 get_gpus() {
     local line name path driver id
     GPU_NAMES=()
@@ -390,11 +429,8 @@ get_gpus() {
         while IFS= read -r line; do
             case $line in
                 *'VGA compatible controller: '*|*'3D controller: '*|*'Display controller: '*)
-                    name=${line#*controller: }; name=${name% (rev *}
-                    name=${name/Advanced Micro Devices, Inc. /}
-                    name=${name/NVIDIA Corporation /NVIDIA }
-                    name=${name/Intel Corporation /Intel }
-                    GPU_NAMES+=("$name") ;;
+                    normalize_gpu_name "${line#*controller: }" "$CPU_MODEL"
+                    GPU_NAMES+=("$REPLY") ;;
             esac
         done < <(LC_ALL=C lspci 2>/dev/null)
     fi
@@ -487,17 +523,27 @@ sample() {
 
 setup_style() {
     local charmap
-    RESET='' BOLD='' ACCENT='' DIM='' GOOD='' WARN='' BAD=''
+    RESET='' BOLD='' TEXT='' ACCENT='' DIM='' BORDER='' GOOD='' WARN='' BAD=''
     if [[ $COLOR_MODE == always || ($COLOR_MODE == auto && -t 1 && ! ${NO_COLOR+x} && ${TERM:-dumb} != dumb) ]]; then
-        RESET=$'\e[0m'; BOLD=$'\e[1m'; ACCENT=$'\e[36m'; DIM=$'\e[90m'; GOOD=$'\e[32m'; WARN=$'\e[33m'; BAD=$'\e[31m'
+        RESET=$'\e[0m'; BOLD=$'\e[1m'; TEXT=$'\e[37m'; ACCENT=$'\e[36m'
+        DIM=$'\e[37m'; BORDER=$'\e[34m'; GOOD=$'\e[32m'; WARN=$'\e[33m'; BAD=$'\e[31m'
         case ${TERM:-} in *256color*|*direct*|xterm-kitty|foot*)
-            ACCENT=$'\e[38;5;81m'; DIM=$'\e[38;5;245m'; GOOD=$'\e[38;5;114m'; WARN=$'\e[38;5;215m'; BAD=$'\e[38;5;203m' ;;
+            TEXT=$'\e[38;5;254m'; ACCENT=$'\e[38;5;110m'; DIM=$'\e[38;5;250m'
+            BORDER=$'\e[38;5;109m'; GOOD=$'\e[38;5;150m'; WARN=$'\e[38;5;222m'; BAD=$'\e[38;5;131m' ;;
         esac
+        if [[ ${COLORTERM:-} == truecolor || ${COLORTERM:-} == 24bit || ${TERM:-} == *direct* ]]; then
+            # Nord-inspired foregrounds; preserve the user's terminal background.
+            TEXT=$'\e[38;2;229;233;240m'; ACCENT=$'\e[38;2;136;192;208m'
+            DIM=$'\e[38;2;184;197;214m'; BORDER=$'\e[38;2;129;161;193m'
+            GOOD=$'\e[38;2;163;190;140m'; WARN=$'\e[38;2;235;203;139m'; BAD=$'\e[38;2;191;97;106m'
+        fi
     fi
-    BAR_ON='#' BAR_OFF='-' RULE_CHAR='-' MARK='>' DEG=C
+    BAR_ON='#' BAR_OFF='-' RULE_CHAR='-' MARK='>' DEG=C UNICODE=0
+    BOX_TL='+' BOX_TR='+' BOX_BL='+' BOX_BR='+' BOX_V='|'
     charmap=$(locale charmap 2>/dev/null)
     if ((ASCII == 0)) && [[ $charmap == UTF-8 || $charmap == UTF8 ]]; then
-        BAR_ON='━'; BAR_OFF='─'; RULE_CHAR='─'; MARK='●'; DEG='°C'
+        BAR_ON='━'; BAR_OFF='─'; RULE_CHAR='─'; MARK='●'; DEG='°C'; UNICODE=1
+        BOX_TL='╭'; BOX_TR='╮'; BOX_BL='╰'; BOX_BR='╯'; BOX_V='│'
     fi
 }
 
@@ -516,7 +562,7 @@ get_size() {
     COLS=$cols ROWS=$rows
     WIDTH=$((cols-3))
     ((ONCE)) && WIDTH=$((cols-2))
-    ((WIDTH > 106 && REQUESTED_WIDTH == 0)) && WIDTH=106
+    ((WIDTH > 158)) && WIDTH=158
     ((REQUESTED_WIDTH > 0 && REQUESTED_WIDTH-2 < WIDTH)) && WIDTH=$((REQUESTED_WIDTH-2))
     ((WIDTH < 1)) && WIDTH=1
     SMALL=$COMPACT
@@ -524,26 +570,35 @@ get_size() {
 }
 
 add_row() {
-    local text=$1 style=${2:-} count=${3:-$WIDTH}
-    fit "$count" "$text"
-    FRAME+=("  $style$REPLY$RESET")
+    fit "${3:-$WIDTH}" "$1"
+    FRAME+=("  ${2:-$TEXT}$REPLY$RESET")
 }
 
-blank_row() { add_row ''; }
-
-rule() { repeat "$WIDTH" "$RULE_CHAR"; add_row "$REPLY" "$DIM"; }
-
-pair_row() {
-    local left=$1 right=$2 left_width=$((WIDTH/2)) a
-    fit "$left_width" "$left"; a=$REPLY
-    add_row "$a$right"
+# CW and CELLS belong to the panel being built. Styled cells always occupy CW
+# visible columns; framing never measures ANSI escape sequences as text.
+cell() {
+    fit "$CW" "$1"
+    CELLS+=("${2:-$TEXT}$REPLY$RESET")
 }
 
-section() { add_row "$1" "$ACCENT$BOLD"; }
+field() {
+    local label value
+    fit 9 "$1"; label=$REPLY
+    fit "$((CW-9))" "$2"; value=$REPLY
+    CELLS+=("$DIM$label$TEXT$value$RESET")
+}
+
+pair_cell() {
+    local left
+    fit "$((CW/2))" "$1"; left=$REPLY
+    fit "$((CW-CW/2))" "$2"
+    CELLS+=("$TEXT$left$REPLY$RESET")
+}
 
 metric() {
     local label=$1 pct=$2 note=$3 length filled empty bar tail color suffix a n
-    length=18; ((SMALL)) && length=10
+    # Stable columns: changing a value's number of digits must not move its bar.
+    length=8; ((CW < 48)) && length=4; ((CW >= 65)) && length=18
     n=${pct%.*}; [[ -n $n ]] || n=0
     ((n < 0)) && n=0; ((n > 100)) && n=100
     color=$GOOD; ((n >= 75)) && color=$WARN; ((n >= 90)) && color=$BAD
@@ -557,10 +612,10 @@ metric() {
     filled=$((n*length/100)); empty=$((length-filled))
     repeat "$filled" "$BAR_ON"; bar=$REPLY
     repeat "$empty" "$BAR_OFF"; tail=$REPLY
-    fit 6 "$label"; a=$REPLY
+    fit 5 "$label"; a=$REPLY
     if [[ -n $pct ]]; then printf -v suffix '%5s%%' "$pct"; else suffix='   n/a'; fi
-    fit "$((WIDTH-6-length-9))" "$note"; note=$REPLY
-    FRAME+=("  $DIM$a$RESET$color$bar$DIM$tail$RESET $BOLD$suffix$RESET  $note")
+    fit "$((CW-14-length))" "$note"; note=$REPLY
+    CELLS+=("$DIM$a$color$bar$BORDER$tail$TEXT $BOLD$suffix$RESET$TEXT  $note$RESET")
 }
 
 memory_note() {
@@ -569,17 +624,134 @@ memory_note() {
     human_bytes "$total"; REPLY="$a / $REPLY"
 }
 
-history_row() {
-    local value level text='' glyphs=' .:-=+*#%@' i
-    [[ $BAR_ON == '━' ]] && glyphs='▁▂▃▄▅▆▇█'
+history_cell() {
+    local value level text='' glyphs=' .:-=+*#%@'
+    ((UNICODE)) && glyphs='▁▂▃▄▅▆▇█'
     for value in "${CPU_HISTORY[@]}"; do
         level=$((value*(${#glyphs}-1)/100)); text+=${glyphs:level:1}
     done
-    add_row "CPU history  $text" "$DIM"
+    cell "HISTORY  $text" "$ACCENT"
+}
+
+panelize() {
+    local title=$1 height=${2:-${#CELLS[@]}} i tail empty
+    PANEL=()
+    fit "$((CW-1))" "$title"; title=${REPLY%"${REPLY##*[! ]}"}
+    repeat "$((CW-1-${#title}))" "$RULE_CHAR"; tail=$REPLY
+    PANEL+=("$BORDER$BOX_TL$RULE_CHAR $ACCENT$BOLD$title$RESET$BORDER $tail$BOX_TR$RESET")
+    fit "$CW" ''; empty=$REPLY
+    for ((i=0;i<height;i++)); do
+        PANEL+=("$BORDER$BOX_V$RESET ${CELLS[i]:-$empty} $BORDER$BOX_V$RESET")
+    done
+    repeat "$((CW+2))" "$RULE_CHAR"
+    PANEL+=("$BORDER$BOX_BL$REPLY$BOX_BR$RESET")
+}
+
+system_cells() {
+    local name gpu_text=''
+    CELLS=()
+    if ((DETAILS)); then
+        field PACKAGES "$PKG_COUNT ($PKG_MANAGER)${FLATPAK_COUNT:+ / $FLATPAK_COUNT Flatpak}"
+        if ((SMALL)); then
+            cell "SHELL $SHELL_NAME / INIT $INIT_SYSTEM"
+            if [[ -n $AUR_HELPERS ]]; then field AUR "$AUR_HELPERS"
+            else field GOVERNOR "$CPU_GOVERNOR"; fi
+        elif ((WIDE)); then
+            field SHELL "$SHELL_NAME"
+            field INIT "$INIT_SYSTEM"
+            field AUDIO "$AUDIO_SERVER"
+            field 'ROOT FS' "${FILESYSTEM_NAME:-n/a}"
+            cell ''
+            field DRIVER "$CPU_DRIVER"
+            field GOVERNOR "$CPU_GOVERNOR"
+            field EPP "${CPU_EPP:-n/a}"
+            [[ -n $AUR_HELPERS ]] && field AUR "$AUR_HELPERS"
+            cell ''
+            if ((${#GPU_NAMES[@]})); then
+                for name in "${GPU_NAMES[@]}"; do field GPU "$name"; done
+            else field GPU 'n/a'; fi
+        else
+            pair_cell "SHELL $SHELL_NAME" "INIT $INIT_SYSTEM"
+            pair_cell "AUDIO $AUDIO_SERVER" "ROOT FS ${FILESYSTEM_NAME:-n/a}"
+            field DRIVER "$CPU_DRIVER"
+            field GOVERNOR "$CPU_GOVERNOR${CPU_EPP:+ / $CPU_EPP}"
+            if [[ -n $AUR_HELPERS ]]; then field AUR "$AUR_HELPERS"
+            else field ARCH "$ARCH_NAME / $CPU_CORES cores / $CPU_THREADS threads"; fi
+            for name in "${GPU_NAMES[@]}"; do gpu_text+="${gpu_text:+; }$name"; done
+            field GPU "${gpu_text:-n/a}"
+        fi
+    elif ((SMALL)); then
+        cell "$OS_NAME" "$TEXT$BOLD"
+        field CPU "$CPU_MODEL"
+        field GPU "$GPU_NAME"
+    elif ((WIDE)); then
+        cell "$OS_NAME" "$TEXT$BOLD"
+        field HOST "$HOST_NAME"
+        field KERNEL "$KERNEL_VER"
+        field DESKTOP "$DE_NAME"
+        field SESSION "$DISPLAY_SERVER"
+        cell ''
+        field CPU "$CPU_MODEL"
+        cell "$CPU_CORES cores / $CPU_THREADS threads / $ARCH_NAME" "$DIM"
+        field GPU "$GPU_NAME"
+        cell ''
+        field UPTIME "$UPTIME"
+    else
+        cell "$OS_NAME" "$TEXT$BOLD"
+        pair_cell "HOST $HOST_NAME" "UPTIME $UPTIME"
+        field KERNEL "$KERNEL_VER"
+        pair_cell "DESKTOP $DE_NAME" "SESSION $DISPLAY_SERVER"
+        field CPU "$CPU_MODEL"
+        cell "$CPU_CORES cores / $CPU_THREADS threads / $ARCH_NAME" "$DIM"
+        field GPU "$GPU_NAME"
+    fi
+}
+
+live_cells() {
+    local note raw_peak
+    CELLS=()
+    metric CPU "$CPU_PERCENT" "${CPU_FREQ:-n/a} (CPU0)"
+    if [[ -n $CPU_TEMP ]]; then
+        raw_peak=$(((CPU_PEAK+50)/100))
+        printf -v note '%s%s / peak %d.%d%s' "$CPU_TEMP" "$DEG" "$((raw_peak/10))" "$((raw_peak%10))" "$DEG"
+    else note='n/a'; fi
+    field TEMP "$note"
+    memory_note "$RAM_USED" "$RAM_TOTAL"; metric RAM "$RAM_PERCENT" "$REPLY"
+    if ((SWAP_TOTAL)); then
+        memory_note "$SWAP_USED" "$SWAP_TOTAL"; metric SWAP "$SWAP_PERCENT" "$REPLY"
+    else metric SWAP '' 'Disabled'; fi
+    if ((DISK_TOTAL)); then
+        human_bytes "$DISK_FREE"; metric DISK "$DISK_PERCENT" "/ $REPLY free"
+    else metric DISK '' 'n/a'; fi
+    ((WIDE)) && cell ''
+    if [[ -n $NET_IFACE ]]; then
+        human_bytes "$RX_RATE"; note="down $REPLY/s"
+        human_bytes "$TX_RATE"; note+="  up $REPLY/s"
+        if ((SMALL)); then cell "NET  $note"
+        else field NET "$NET_IFACE"; cell "     $note"; fi
+    else
+        field NET 'No active interface'
+        ((SMALL == 0)) && cell ''
+    fi
+    if [[ -n $BAT_NAME ]]; then
+        ((WIDE)) && cell ''
+        if ((SMALL)); then
+            metric BAT "${BAT_PERCENT:-}" "$BAT_STATUS${BAT_POWER:+ ${BAT_POWER}W}"
+        else
+            metric BAT "${BAT_PERCENT:-}" "$BAT_NAME / $BAT_STATUS"
+            if ((WIDE)); then
+                field POWER "${BAT_POWER:-n/a}${BAT_POWER:+ W}"
+                field HEALTH "${BAT_HEALTH:-n/a}${BAT_HEALTH:+%}"
+            else
+                field POWER "${BAT_POWER:-n/a}${BAT_POWER:+ W} / health ${BAT_HEALTH:-n/a}${BAT_HEALTH:+%}"
+            fi
+        fi
+    fi
 }
 
 build_frame() {
-    local status tag note info raw_peak gpu_text name
+    local status tag note info WIDE=0 logo=0 CW left_width right_width title header_rows height i
+    local -a CELLS=() PANEL=() system=() live=()
     FRAME=()
     if ((ACTIVE && (COLS < 48 || ROWS < 16))); then
         add_row 'DATAFETCH' "$ACCENT$BOLD"
@@ -588,80 +760,54 @@ build_frame() {
         add_row 'Resize the window. Press q to exit.' "$DIM"
         return
     fi
+    ((WIDTH >= 101 && COMPACT == 0 && ROWS >= 20)) && WIDE=1
+    ((WIDE)) && SMALL=0
+    ((WIDE == 0 && ROWS < 24)) && SMALL=1
     status="${MARK} LIVE  ${INTERVAL}s"
     ((PAUSED)) && status="${MARK} PAUSED"
     ((ONCE)) && status='SNAPSHOT'
-    fit "$((WIDTH-${#status}))" 'DATAFETCH'; tag=$REPLY
+    tag='DATAFETCH'
+    if ((UNICODE && WIDTH >= 50 && (SMALL == 0 || ROWS >= 18))); then
+        tag='█▀▄ ▄▀█ ▀█▀ ▄▀█ █▀▀ █▀▀ ▀█▀ █▀▀ █ █'
+        logo=1
+    fi
+    fit "$((WIDTH-${#status}))" "$tag"; tag=$REPLY
     FRAME+=("  $ACCENT$BOLD$tag$RESET$GOOD$status$RESET")
-    add_row "System overview  /  $VERSION  /  Klod Cripta" "$DIM"
-    ((SMALL == 0)) && rule
-    if ((DETAILS)); then
-        section 'SYSTEM / DETAILS'
-        add_row "PACKAGES  $PKG_COUNT ($PKG_MANAGER)${FLATPAK_COUNT:+  /  $FLATPAK_COUNT Flatpak apps}"
-        pair_row "SHELL  $SHELL_NAME" "INIT  $INIT_SYSTEM"
-        pair_row "AUDIO  $AUDIO_SERVER" "ROOT FS  ${FILESYSTEM_NAME:-n/a}"
-        ((SMALL == 0)) && add_row "CPU DRIVER  $CPU_DRIVER"
-        add_row "GOVERNOR  $CPU_GOVERNOR${CPU_EPP:+  /  $CPU_EPP}"
-        if ((SMALL == 0)); then
-            if [[ -n $AUR_HELPERS ]]; then add_row "AUR  $AUR_HELPERS"
-            else add_row "ARCH  $ARCH_NAME  /  $CPU_CORES cores  /  $CPU_THREADS threads"; fi
-            gpu_text=''
-            for name in "${GPU_NAMES[@]}"; do gpu_text+="${gpu_text:+; }$name"; done
-            add_row "GPU  ${gpu_text:-n/a}"
+    if ((SMALL == 0 || ROWS >= 18)); then
+        if ((logo)); then add_row '█▄▀ █▀█  █  █▀█ █▀  ██▄  █  █▄▄ █▀█' "$ACCENT$BOLD"
+        else add_row 'SYSTEM MONITOR' "$ACCENT"; fi
+        add_row "DATAFETCH / $VERSION / Klod Cripta" "$DIM"
+    fi
+    header_rows=${#FRAME[@]}
+    title=SYSTEM; ((DETAILS)) && title='SYSTEM / DETAILS'
+    if ((WIDE)); then
+        left_width=$(((WIDTH-2)*44/100)); right_width=$((WIDTH-2-left_width))
+        CW=$((left_width-4)); system_cells; system=("${CELLS[@]}")
+        CW=$((right_width-4)); live_cells; live=("${CELLS[@]}")
+        if ((ROWS >= header_rows+${#live[@]}+5)); then
+            cell ''; history_cell; live=("${CELLS[@]}")
         fi
-    elif ((SMALL)); then
-        add_row "$OS_NAME" "$BOLD"
-        add_row "CPU  $CPU_MODEL"
-        add_row "GPU  $GPU_NAME"
+        height=${#system[@]}; ((${#live[@]} > height)) && height=${#live[@]}
+        # A multi-GPU details view must still leave room for the key bar.
+        ((height > ROWS-header_rows-3)) && height=$((ROWS-header_rows-3))
+        CW=$((left_width-4)); CELLS=("${system[@]}"); panelize "$title" "$height"; system=("${PANEL[@]}")
+        CW=$((right_width-4)); CELLS=("${live[@]}"); panelize "LIVE METRICS / $TIME_NOW" "$height"
+        for ((i=0;i<${#PANEL[@]};i++)); do FRAME+=("  ${system[i]}  ${PANEL[i]}"); done
     else
-        section 'SYSTEM'
-        add_row "$OS_NAME" "$BOLD"
-        pair_row "HOST     $HOST_NAME" "UPTIME   $UPTIME"
-        add_row "KERNEL   $KERNEL_VER"
-        pair_row "DESKTOP  $DE_NAME" "SESSION  $DISPLAY_SERVER"
-        add_row "CPU      $CPU_MODEL"
-        add_row "GPU      $GPU_NAME"
-        add_row "$CPU_CORES cores  /  $CPU_THREADS threads  /  $ARCH_NAME" "$DIM"
+        CW=$((WIDTH-4)); system_cells; panelize "$title"
+        for tag in "${PANEL[@]}"; do FRAME+=("  $tag"); done
+        live_cells
+        if ((SMALL == 0 && ROWS >= ${#FRAME[@]}+${#CELLS[@]}+5)); then cell ''; history_cell; fi
+        panelize "LIVE METRICS / $TIME_NOW"
+        for tag in "${PANEL[@]}"; do FRAME+=("  $tag"); done
     fi
-    ((SMALL == 0)) && blank_row
-    section "LIVE METRICS  /  $TIME_NOW"
-    metric CPU "$CPU_PERCENT" "${CPU_FREQ:-n/a} (CPU0)"
-    if [[ -n $CPU_TEMP ]]; then
-        raw_peak=$(((CPU_PEAK+50)/100))
-        printf -v note '%s%s  /  peak %d.%d%s' "$CPU_TEMP" "$DEG" "$((raw_peak/10))" "$((raw_peak%10))" "$DEG"
-    else note='n/a'; fi
-    add_row "TEMP  $note" "$DIM"
-    memory_note "$RAM_USED" "$RAM_TOTAL"; metric RAM "$RAM_PERCENT" "$REPLY"
-    if ((SWAP_TOTAL)); then
-        memory_note "$SWAP_USED" "$SWAP_TOTAL"; metric SWAP "$SWAP_PERCENT" "$REPLY"
-    else metric SWAP '' 'Disabled'; fi
-    if ((DISK_TOTAL)); then
-        human_bytes "$DISK_FREE"; metric DISK "$DISK_PERCENT" "/  $REPLY free"
-    else metric DISK '' 'n/a'; fi
-    if [[ -n $NET_IFACE ]]; then
-        human_bytes "$RX_RATE"; note="down $REPLY/s"
-        human_bytes "$TX_RATE"; note+="  up $REPLY/s"
-        add_row "NET   $note  /  $NET_IFACE"
-    else add_row 'NET   No active interface' "$DIM"; fi
-    if [[ -n $BAT_NAME ]]; then
-        note="$BAT_NAME  $BAT_STATUS${BAT_POWER:+  ${BAT_POWER}W}"
-        ((SMALL == 0)) && [[ -n $BAT_HEALTH ]] && note+="  health ${BAT_HEALTH}%"
-        # Battery charge is a capacity, not a utilization warning.
-        metric BAT "${BAT_PERCENT:-}" "$note"
-    fi
-    if ((SMALL == 0 && ROWS >= ${#FRAME[@]}+6)); then
-        blank_row
-        history_row
-    fi
-    if ((SMALL == 0)); then rule; fi
     if ((ONCE)); then
-        add_row 'Snapshot / run without --once for the live dashboard' "$DIM"
-    elif ((SMALL)); then
-        add_row 'p pause  +/- speed  d details  q quit' "$DIM"
+        add_row 'Snapshot / run without --once for live metrics' "$DIM"
     else
         note='p pause'; ((PAUSED)) && note='p resume'
         info='d details'; ((DETAILS)) && info='d overview'
-        add_row "$note   + / - refresh   $info   q quit" "$DIM"
+        if ((SMALL)); then add_row "$note  +/- speed  $info  q quit" "$DIM"
+        else add_row "$note   +/- refresh   $info   q quit" "$DIM"; fi
     fi
 }
 

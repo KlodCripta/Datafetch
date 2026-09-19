@@ -1,8 +1,10 @@
 # Datafetch
 
-A small Bash dashboard for Linux: the machine's identity at the top, live readings underneath.
+A small Bash dashboard for Linux: the machine's identity and live readings in two clean panels.
 
 **3.0 preview** brings a new terminal layout, updates only changed rows, and adds disk space, network traffic, battery information and keyboard controls. This branch is available for testing before a stable release.
+
+**Preview 2** adds light rounded borders, a larger Datafetch wordmark and brighter foreground colors inspired by [Nord](https://www.nordtheme.com/docs/colors-and-palettes). The terminal background is preserved. True color is used when advertised by the terminal, with 256-color and basic ANSI fallbacks.
 
 ## Try it
 
@@ -26,7 +28,7 @@ No installation or root access is needed. Datafetch reads local system informati
 
 Press `d` for package counts, shell, init system, audio server, root filesystem, CPU driver/governor and energy preference. Arch systems list every supported AUR helper found: `paru`, `yay`, `pikaur`, `aura`, `trizen`, `pakku`. Portage and a running OpenRC environment are also detected.
 
-Missing readings are shown as `n/a`. Temperature detection uses CPU sensors, preferring Tdie over an offset Tctl when both exist. It does not use a disk temperature as a substitute. GPU names come from PCI information; Datafetch does not guess integrated/dedicated status from the vendor.
+Missing readings are shown as `n/a`. Temperature detection uses CPU sensors, preferring Tdie over an offset Tctl when both exist. It does not use a disk temperature as a substitute. GPU names prefer the marketing name supplied by the PCI database, dropping manufacturer boilerplate and chip codenames when possible. Ambiguous model families are kept as families. The Barcelo GPU paired with a Ryzen 5 7430U is displayed as `AMD Radeon Graphics (7 CU)`, based on [AMD's specification](https://www.amd.com/en/products/processors/laptop/ryzen/7000-series/amd-ryzen-5-7430u.html); other Barcelo models retain the codename. Datafetch does not infer integrated/dedicated status from the vendor alone.
 
 ## Controls
 
@@ -37,7 +39,7 @@ Missing readings are shown as `n/a`. Temperature detection uses CPU sensors, pre
 | `d` | Toggle system details |
 | `q`, Ctrl+C or Ctrl+D | Exit |
 
-The regular layout fits an 80×24 terminal. Smaller windows automatically use a compact layout, down to 48×16. Long fields end with `~` when shortened to fit. Resize handling continues to work while paused.
+The regular layout fits an 80×24 terminal. Windows at least 104 columns wide and 20 rows tall show the panels side by side; narrower windows stack them. Smaller windows automatically use a compact layout, down to 48×16, keeping the live readings and keyboard controls visible. Long fields end with `~` when shortened to fit. Resize handling continues to work while paused.
 
 ## Options
 
@@ -74,7 +76,7 @@ bash -n datafetch.sh
 python3 -m unittest discover -s tests -v
 ```
 
-Tests cover CLI behavior, CPU/memory calculations, sensor selection, battery units, network rates and a real pseudo-terminal for redraws, pause, resize and terminal restoration. They do not change system settings outside their own pseudo-terminal. Hardware fixtures supplement the devices available in the test environment.
+Tests cover CLI behavior, framed layouts, GPU labels, CPU/memory calculations, sensor selection, battery units, network rates and a real pseudo-terminal for redraws, pause, resize and terminal restoration. They do not change system settings outside their own pseudo-terminal. Hardware fixtures supplement the devices available in the test environment. Flicker and rendering cost on older netbooks still need testing on those machines.
 
 ## Italiano
 
@@ -83,6 +85,8 @@ Datafetch raccoglie le informazioni del computer e le affianca a un monitor aggi
 Scarica `datafetch.sh`, apri il terminale nella cartella del file ed esegui `bash datafetch.sh`. Premi `p` per mettere in pausa, `+` e `-` per cambiare la frequenza, `d` per i dettagli, `q` per uscire. Non serve `sudo`.
 
 La nuova interfaccia aggiunge spazio disco, traffico di rete e batteria. Le righe vengono aggiornate sul posto, senza cancellare tutta la schermata a ogni ciclo. Il formato si adatta alla finestra, fino a 48×16 caratteri. Con `--once` puoi ottenere una schermata di testo da copiare o salvare.
+
+La preview 2 introduce colori ispirati a Nord, testi più leggibili, riquadri leggeri e un titolo più visibile. Nelle finestre larghe sistema e dati live sono affiancati; nelle altre sono disposti in verticale. I nomi delle GPU vengono ripuliti, mantenendo le informazioni che il sistema permette di identificare. La prova dello sfarfallio sui vecchi netbook resta da fare sull'hardware reale.
 
 Le informazioni su temperatura, frequenza e batteria dipendono da ciò che il sistema rende disponibile. `n/a` indica un dato non leggibile. La batteria mostrata è la prima batteria di sistema presente; il nome aiuta a riconoscerla sui portatili che ne hanno più di una.
 
