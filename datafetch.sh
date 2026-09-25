@@ -3,13 +3,17 @@
 # Copyright (c) 2024–2026 Klod Cripta. MIT License.
 # Bash 4.3+; Linux /proc and /sys. Optional tools enrich static information.
 
-VERSION='3.0.0-preview.2'
+VERSION='3.0.1'
 INTERVAL=1
 INTERVAL_CS=100
 ONCE=0
 COMPACT=0
 DETAILS=0
+DETAIL_PAGE=0
+SYSTEM_PAGES=1
 ASCII=0
+ICONS=1
+ICON_WIDTH=0
 COLOR_MODE=auto
 REQUESTED_WIDTH=0
 REQUESTED_INTERFACE=''
@@ -35,8 +39,10 @@ NET_IFACE=''
 NOW_CS=0
 UPTIME=''
 RESET='' BOLD='' TEXT='' ACCENT='' DIM='' BORDER='' GOOD='' WARN='' BAD=''
+BLUE='' PINE='' VIOLET=''
 BAR_ON='#' BAR_OFF='-' RULE_CHAR='-' MARK='>' DEG='C'
 BOX_TL='+' BOX_TR='+' BOX_BL='+' BOX_BR='+' BOX_V='|' UNICODE=0
+BOX_LJOIN='+' BOX_RJOIN='+'
 CPU_TEMP_FILES=()
 CPU_HISTORY=()
 FRAME=()
@@ -55,13 +61,14 @@ Usage: datafetch [options]
   --details           Start with the system details view
   --interface NAME    Monitor a specific network interface
   --width COLUMNS     Snapshot/content width, 48–160 columns
+  --no-icons          Hide field icons, keeping the current frame style
   --ascii             Use only ASCII characters
   --no-color          Disable colors (also respects NO_COLOR)
   --color MODE        auto, always or never
   -h, --help          Show this help
   -v, --version       Show the version
 
-Live keys: p / space = pause, + = faster, - = slower, d = details, q = quit.
+Live keys: p / space = pause, + = faster, - = slower, d = details/next page, q = quit.
 No root access needed. No network requests. Disk statistics refresh every 5s.
 HELP
 }
@@ -74,6 +81,7 @@ parse_args() {
             --once) ONCE=1 ;;
             --compact) COMPACT=1 ;;
             --details) DETAILS=1 ;;
+            --no-icons) ICONS=0 ;;
             --ascii) ASCII=1 ;;
             --no-color) COLOR_MODE=never ;;
             -h|--help) usage; return 10 ;;
@@ -364,31 +372,106 @@ read_battery() {
 }
 
 get_packages() {
-    local count='' pkg path
-    PKG_MANAGER='n/a' PKG_COUNT='n/a' AUR_HELPERS='' FLATPAK_COUNT=''
-    if command -v pacman >/dev/null 2>&1; then PKG_MANAGER=pacman; count=$(pacman -Qq 2>/dev/null | wc -l)
-    elif command -v dpkg-query >/dev/null 2>&1; then PKG_MANAGER=dpkg; count=$(dpkg-query -W -f='${db:Status-Status}\n' 2>/dev/null | LC_ALL=C awk '$0=="installed"{n++} END{print n+0}')
-    elif [[ -d /var/db/pkg ]] && command -v emerge >/dev/null 2>&1; then
+    local root=${1:-/} count='' pkg path
+    root=${root%/}
+    PKG_MANAGER='n/a' PKG_COUNT='n/a' PKG_MANAGERS='' AUR_HELPERS='' FLATPAK_COUNT=''
+    if command -v pacman >/dev/null 2>&1; then
+        PKG_MANAGER=pacman; count=$(set -o pipefail; pacman -Qq 2>/dev/null | wc -l) || count=''
+    elif command -v dpkg-query >/dev/null 2>&1; then
+        PKG_MANAGER=dpkg
+        if command -v apt >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then PKG_MANAGER=apt; fi
+        count=$(set -o pipefail; dpkg-query -W -f='${db:Status-Status}\n' 2>/dev/null | LC_ALL=C awk '$0=="installed"{n++} END{print n+0}') || count=''
+    elif [[ -d $root/var/db/pkg ]] && command -v emerge >/dev/null 2>&1; then
         PKG_MANAGER=Portage; count=0
-        for path in /var/db/pkg/*/*; do [[ -d $path ]] && ((count+=1)); done
-    elif command -v rpm >/dev/null 2>&1; then PKG_MANAGER=rpm; count=$(rpm -qa 2>/dev/null | wc -l)
-    elif command -v xbps-query >/dev/null 2>&1; then PKG_MANAGER=xbps; count=$(xbps-query -l 2>/dev/null | wc -l)
-    elif command -v apk >/dev/null 2>&1; then PKG_MANAGER=apk; count=$(apk info 2>/dev/null | wc -l)
+        for path in "$root"/var/db/pkg/*/*; do [[ -d $path ]] && ((count+=1)); done
+    elif command -v rpm >/dev/null 2>&1; then
+        PKG_MANAGER=rpm
+        for pkg in dnf dnf5 zypper yum; do
+            command -v "$pkg" >/dev/null 2>&1 && { PKG_MANAGER=$pkg; break; }
+        done
+        count=$(set -o pipefail; rpm -qa 2>/dev/null | wc -l) || count=''
+    elif command -v xbps-query >/dev/null 2>&1; then
+        PKG_MANAGER=xbps; count=$(set -o pipefail; xbps-query -l 2>/dev/null | wc -l) || count=''
+    elif command -v apk >/dev/null 2>&1; then
+        PKG_MANAGER=apk; count=$(set -o pipefail; apk info 2>/dev/null | wc -l) || count=''
     fi
-    count=${count//[[:space:]]/}; [[ -n $count ]] && PKG_COUNT=$count
+    count=${count//[[:space:]]/}; unsigned "$count" && PKG_COUNT=$count
+    [[ $PKG_MANAGER != n/a ]] && PKG_MANAGERS=$PKG_MANAGER
+    # Report additional installed tools without contacting stores or snapd.
+    for pkg in flatpak snap nix guix; do
+        if command -v "$pkg" >/dev/null 2>&1; then PKG_MANAGERS+="${PKG_MANAGERS:+, }$pkg"; fi
+    done
+    PKG_MANAGERS=${PKG_MANAGERS:-n/a}
     if [[ $PKG_MANAGER == pacman ]]; then
         for pkg in paru yay pikaur aura trizen pakku; do
             command -v "$pkg" >/dev/null 2>&1 && AUR_HELPERS+="${AUR_HELPERS:+, }$pkg"
         done
     fi
+    AUR_HELPERS=${AUR_HELPERS:-non pervenuto}
     if command -v flatpak >/dev/null 2>&1; then
-        FLATPAK_COUNT=$(flatpak list --app --columns=application 2>/dev/null | wc -l)
+        FLATPAK_COUNT=$(set -o pipefail; flatpak list --app --columns=application 2>/dev/null | wc -l) || FLATPAK_COUNT=''
         FLATPAK_COUNT=${FLATPAK_COUNT//[[:space:]]/}
     fi
+    return 0
+}
+
+normalize_desktop_name() {
+    local raw=$1 token name
+    local -a tokens=()
+    sanitize "$raw"; raw=$REPLY
+    IFS=: read -r -a tokens <<< "$raw"
+    for token in "${tokens[@]}"; do
+        token=${token##*/}; token=${token%.desktop}
+        case ${token,,} in
+            kde|plasma|plasmax11|plasmawayland|'kde plasma') name='KDE Plasma' ;;
+            gnome-classic) name='GNOME Classic' ;; gnome|gnome-xorg|gnome-wayland) name=GNOME ;;
+            cinnamon|x-cinnamon) name=Cinnamon ;; lxqt) name=LXQt ;; lxde) name=LXDE ;;
+            xfce|xfce4) name=Xfce ;; mate) name=MATE ;; budgie|budgie-desktop) name=Budgie ;;
+            deepin|dde) name=Deepin ;; pantheon) name=Pantheon ;; cosmic) name=COSMIC ;;
+            unity) name=Unity ;; trinity|tde) name=Trinity ;; enlightenment) name=Enlightenment ;;
+            sway) name=Sway ;; hyprland) name=Hyprland ;; i3) name=i3 ;;
+            *) continue ;;
+        esac
+        REPLY=$name; return
+    done
+    REPLY=${raw:-n/a}
+}
+
+get_shell() {
+    local procroot=${1:-/proc} pid=${2:-$PPID} attempt name parent key value
+    SHELL_NAME='n/a'
+    # Find a launching shell through wrappers; do not report Datafetch's own
+    # Bash interpreter as the user's shell. Fall back to the configured shell.
+    for ((attempt=0; attempt<8; attempt++)); do
+        unsigned "$pid" && ((pid > 1)) || break
+        read_value "$procroot/$pid/comm"; name=${REPLY#-}
+        case $name in
+            bash|zsh|fish|dash|ash|ksh|ksh93|mksh|tcsh|csh|nu|elvish|xonsh|yash|osh)
+                SHELL_NAME=$name; return ;;
+        esac
+        [[ -r $procroot/$pid/status ]] || break
+        parent=''
+        while read -r key value; do [[ $key == PPid: ]] && { parent=$value; break; }; done < "$procroot/$pid/status" 2>/dev/null
+        [[ -n $parent && $parent != "$pid" ]] || break
+        pid=$parent
+    done
+    name=${SHELL:-}
+    SHELL_NAME=${name##*/}; SHELL_NAME=${SHELL_NAME:-n/a}
+}
+
+get_audio_server() {
+    AUDIO_SERVER=''
+    if command -v pgrep >/dev/null 2>&1; then
+        if pgrep -x -u "$UID" pipewire >/dev/null 2>&1 || pgrep -x -u "$UID" pipewire-pulse >/dev/null 2>&1; then AUDIO_SERVER=PipeWire; fi
+        if pgrep -x -u "$UID" pulseaudio >/dev/null 2>&1; then AUDIO_SERVER+="${AUDIO_SERVER:+, }PulseAudio"; fi
+        if pgrep -x -u "$UID" jackd >/dev/null 2>&1 || pgrep -x -u "$UID" jackdbus >/dev/null 2>&1; then AUDIO_SERVER+="${AUDIO_SERVER:+, }JACK"; fi
+    fi
+    AUDIO_SERVER=${AUDIO_SERVER:-n/a}
 }
 
 normalize_gpu_name() {
-    local name=$1 cpu=${2:-} vendor='' label rest
+    local name=$1 vendor='' label rest chip=''
+    GPU_CODENAME=''
     sanitize "$name"; name=${REPLY% (rev *}
     case $name in
         *'Advanced Micro Devices'*|*'[AMD/ATI]'*|AMD*) vendor=AMD ;;
@@ -400,55 +483,194 @@ normalize_gpu_name() {
     name=${name/NVIDIA Corporation /}
     name=${name/Intel Corporation /}
     name=${name#"$vendor "}
-    # PCI databases often put the useful marketing name after a chip codename.
     rest=$name
     while [[ $rest == *'['*']'* ]]; do
         label=${rest#*\[}; label=${label%%\]*}
         case $label in
-            *GeForce*|*Quadro*|*RTX*|*Radeon*|*Graphics*|*Arc*) name=$label; break ;;
+            *GeForce*|*Quadro*|*RTX*|*Radeon*|*Graphics*|*Arc*)
+                [[ $vendor == AMD ]] && chip=${name%% \[*}
+                name=$label; break ;;
         esac
         rest=${rest#*\]}
     done
-    if [[ $vendor == AMD && $name == Barcelo ]]; then
-        # AMD's 7430U specification: Radeon Graphics, seven graphics cores.
-        # Require the integrated PCI codename as well as the exact CPU model.
-        if [[ $cpu =~ (^|[[:space:]])7430U($|[[:space:]]) ]]; then
-            name='Radeon Graphics (7 CU)'
-        else name='Radeon Graphics (Barcelo)'; fi
+    if [[ $vendor == AMD ]]; then
+        case $name in
+            Barcelo|Picasso|Raven|Raven2|Renoir|Cezanne|Lucienne|Rembrandt|Raphael|Phoenix|Phoenix1|Phoenix2)
+                chip=$name; name=Radeon ;;
+        esac
+        if [[ $name == Radeon\ *\ Graphics && $name != 'Radeon Graphics' ]]; then name=${name% Graphics}; fi
     fi
     name=${name//Lite Hash Rate/LHR}
     name=${name//(R)/}; name=${name//(TM)/}
     name=${name#"$vendor "}
     REPLY="${vendor:+$vendor }$name"
+    if [[ -n $chip && $REPLY != *"$chip"* ]] && ((${#REPLY}+${#chip}+3 <= 36)); then
+        REPLY+=" ($chip)"
+    fi
+    GPU_CODENAME=$chip
+}
+
+gpu_vendor() {
+    case $1 in
+        1002) REPLY=AMD ;; 10de) REPLY=NVIDIA ;; 8086) REPLY=Intel ;;
+        102b) REPLY=Matrox ;; 1a03) REPLY=ASPEED ;; 15ad) REPLY=VMware ;;
+        1234) REPLY=QEMU ;; 1af4) REPLY=Virtio ;; *) REPLY='' ;;
+    esac
+}
+
+lookup_pci_gpu() {
+    local file=$1 vendor=$2 device=$3
+    REPLY=''
+    [[ -r $file && $vendor =~ ^[[:xdigit:]]{4}$ && $device =~ ^[[:xdigit:]]{4}$ ]] || return 0
+    REPLY=$(LC_ALL=C awk -v vendor="$vendor" -v device="$device" '
+        /^[[:xdigit:]]{4}[[:space:]]/ {
+            if (found) exit
+            if (tolower($1)==vendor) {found=1; sub(/^[^[:space:]]+[[:space:]]+/, ""); maker=$0}
+            next
+        }
+        found && /^\t[^\t]/ && tolower($1)==device {
+            sub(/^\t[^[:space:]]+[[:space:]]+/, ""); print maker " " $0; exit
+        }
+    ' "$file" 2>/dev/null)
+}
+
+lookup_amdgpu_name() {
+    local file=$1 device=${2^^} revision=${3^^} id rev name found=''
+    REPLY=''
+    [[ -r $file && $device =~ ^[[:xdigit:]]{4}$ && $revision =~ ^[[:xdigit:]]{2}$ ]] || return 0
+    while IFS=, read -r id rev name; do
+        id=${id//[[:space:]]/}; rev=${rev//[[:space:]]/}
+        [[ ${id^^} == "$device" && ${rev^^} == "$revision" ]] || continue
+        name=${name#"${name%%[![:space:]]*}"}; name=${name%"${name##*[![:space:]]}"}
+        [[ -n $name ]] || continue
+        # Some IDs occur more than once with conflicting products. Do not pick
+        # one arbitrarily or match only the device ID and discard its revision.
+        [[ -z $found || $found == "$name" ]] || { REPLY=''; return; }
+        found=$name
+    done < "$file"
+    REPLY=$found
+}
+
+cache_pci_gpu() {
+    local slot=${1,,} class=$2 vendor=$3 device=$4 rev=${5,,} vid did
+    [[ $slot =~ ^[[:xdigit:]]{4,8}:[[:xdigit:]]{2}:[[:xdigit:]]{2}\.[0-7]$ ]] || return 0
+    [[ $class =~ \[03[[:xdigit:]]{2}\]$ ]] || return 0
+    [[ $vendor =~ \[([[:xdigit:]]{4})\]$ ]] || return 0
+    vid=${BASH_REMATCH[1],,}; vendor=${vendor% \[*}
+    [[ $device =~ \[([[:xdigit:]]{4})\]$ ]] || return 0
+    did=${BASH_REMATCH[1],,}; device=${device% \[*}
+    pci_slots+=("$slot")
+    if [[ $device == Device || ${device,,} == "$did" ]]; then pci_names[$slot]=''
+    else pci_names[$slot]="$vendor $device"; fi
+    pci_vendors[$slot]=$vid pci_devices[$slot]=$did pci_revisions[$slot]=$rev
+}
+
+read_pci_gpu_descriptions() {
+    local key value slot='' class='' vendor='' device='' revision=''
+    while IFS=$'\t' read -r key value || [[ -n $key ]]; do
+        case $key in
+            Slot:) slot=$value ;; Class:) class=$value ;; Vendor:) vendor=$value ;;
+            Device:) device=$value ;; Rev:) revision=$value ;;
+            '')
+                cache_pci_gpu "$slot" "$class" "$vendor" "$device" "$revision"
+                slot='' class='' vendor='' device='' revision='' ;;
+        esac
+    done
+    cache_pci_gpu "$slot" "$class" "$vendor" "$device" "$revision"
+}
+
+resolve_gpu_name() {
+    local path=$1 slot=$2 vendor=$3 device=$4 revision=$5 raw=$6 name chip model='' maker line driver
+    if [[ -z $raw ]]; then lookup_pci_gpu "$pci_ids" "$vendor" "$device"; raw=$REPLY; fi
+    normalize_gpu_name "$raw"; name=$REPLY; chip=$GPU_CODENAME
+    read_value "$path/product_name"; model=$REPLY
+    if [[ -z $model && $vendor == 1002 ]]; then
+        lookup_amdgpu_name "$amd_ids" "$device" "$revision"; model=$REPLY
+    elif [[ -z $model && $vendor == 10de && -r $nvidia_root/$slot/information ]]; then
+        while IFS= read -r line; do
+            [[ $line == Model:* ]] || continue
+            model=${line#Model:}; model=${model#"${model%%[![:space:]]*}"}; break
+        done < "$nvidia_root/$slot/information"
+    fi
+    if [[ -n $model ]]; then
+        gpu_vendor "$vendor"; maker=$REPLY
+        [[ -n $maker && $model != "$maker "* ]] && model="$maker $model"
+        normalize_gpu_name "$model"
+        # A generic database label must not replace a more useful PCI name.
+        if [[ ! $REPLY =~ ^AMD[[:space:]]Radeon([[:space:]]RX)?([[:space:]]Vega)?([[:space:]](Graphics|Series))?$ || -z $name ]]; then
+            name=$REPLY
+            if [[ -n $chip && $name != *"$chip"* ]] && ((${#name}+${#chip}+3 <= 36)); then name+=" ($chip)"; fi
+        fi
+    fi
+    if [[ -z $name ]]; then
+        gpu_vendor "$vendor"; name="${REPLY:+$REPLY }GPU"
+        if [[ $vendor =~ ^[[:xdigit:]]{4}$ && $device =~ ^[[:xdigit:]]{4}$ ]]; then
+            name+=" [$vendor:$device]"
+        else
+            driver=$(readlink "$path/driver" 2>/dev/null); driver=${driver##*/}
+            [[ -n $driver ]] && name+=" ($driver)"
+        fi
+    fi
+    sanitize "$name"
 }
 
 get_gpus() {
-    local line name path driver id
+    local sysroot=${1:-/sys} pci_ids=${2:-} amd_ids=${3:-/usr/share/libdrm/amdgpu.ids}
+    local nvidia_root=${4:-/proc/driver/nvidia/gpus} path slot class vendor device revision canonical name candidate
+    local -a pci_slots=()
+    local -A pci_names=() pci_vendors=() pci_devices=() pci_revisions=() seen_paths=() seen_slots=()
     GPU_NAMES=()
-    if command -v lspci >/dev/null 2>&1; then
-        while IFS= read -r line; do
-            case $line in
-                *'VGA compatible controller: '*|*'3D controller: '*|*'Display controller: '*)
-                    normalize_gpu_name "${line#*controller: }" "$CPU_MODEL"
-                    GPU_NAMES+=("$REPLY") ;;
-            esac
-        done < <(LC_ALL=C lspci 2>/dev/null)
-    fi
-    if ((${#GPU_NAMES[@]} == 0)); then
-        for path in /sys/class/drm/card*/device; do
-            [[ ${path%/device} =~ /card[0-9]+$ ]] || continue
-            read_value "$path/vendor"; id=$REPLY
-            case $id in 0x1002) name='AMD GPU' ;; 0x8086) name='Intel GPU' ;; 0x10de) name='NVIDIA GPU' ;; *) name='GPU' ;; esac
-            driver=$(readlink "$path/driver" 2>/dev/null); driver=${driver##*/}
-            [[ -n $driver ]] && name+=" ($driver)"
-            GPU_NAMES+=("$name")
+    if (($# < 2)); then
+        for candidate in /usr/share/hwdata/pci.ids /usr/share/misc/pci.ids /usr/share/pci.ids; do
+            [[ -r $candidate ]] && { pci_ids=$candidate; break; }
         done
     fi
+    if command -v lspci >/dev/null 2>&1; then
+        # -vmm is the documented tag/value interface; -nn retains numeric IDs.
+        # No DNS lookup, GPU wake-up query or external graphics utility needed.
+        read_pci_gpu_descriptions < <(LC_ALL=C lspci -D -vmm -nn 2>/dev/null)
+    fi
+    for path in "$sysroot"/bus/pci/devices/*; do
+        read_value "$path/class"; class=${REPLY,,}
+        [[ $class == 0x03???? ]] || continue
+        slot=${path##*/}; slot=${slot,,}
+        read_value "$path/vendor"; vendor=${REPLY#0x}; vendor=${vendor,,}
+        read_value "$path/device"; device=${REPLY#0x}; device=${device,,}
+        read_value "$path/revision"; revision=${REPLY#0x}; revision=${revision,,}
+        resolve_gpu_name "$path" "$slot" "$vendor" "$device" "$revision" "${pci_names[$slot]:-}"; name=$REPLY
+        read_value "$path/boot_vga"
+        if [[ $REPLY == 1 ]]; then GPU_NAMES=("$name" "${GPU_NAMES[@]}")
+        else GPU_NAMES+=("$name"); fi
+        canonical=$(readlink -f "$path" 2>/dev/null)
+        [[ -n $canonical ]] && seen_paths[$canonical]=1
+        seen_slots[$slot]=1
+    done
+    # DRM also exposes non-PCI/platform GPUs and compute cards. A physical
+    # device seen in both PCI and DRM must be listed only once.
+    for path in "$sysroot"/class/drm/card*/device; do
+        [[ ${path%/device} =~ /card[0-9]+$ && -d $path ]] || continue
+        canonical=$(readlink -f "$path" 2>/dev/null)
+        [[ -n $canonical && ! ${seen_paths[$canonical]+seen} ]] || continue
+        slot=${canonical##*/}; slot=${slot,,}
+        read_value "$path/vendor"; vendor=${REPLY#0x}; vendor=${vendor,,}
+        read_value "$path/device"; device=${REPLY#0x}; device=${device,,}
+        read_value "$path/revision"; revision=${REPLY#0x}; revision=${revision,,}
+        resolve_gpu_name "$path" "$slot" "$vendor" "$device" "$revision" "${pci_names[$slot]:-}"
+        GPU_NAMES+=("$REPLY"); seen_paths[$canonical]=1; seen_slots[$slot]=1
+    done
+    # Keep lspci-only records when /sys is restricted or unavailable.
+    for slot in "${pci_slots[@]}"; do
+        [[ ${seen_slots[$slot]+seen} ]] && continue
+        resolve_gpu_name "$sysroot/bus/pci/devices/$slot" "$slot" "${pci_vendors[$slot]}" \
+            "${pci_devices[$slot]}" "${pci_revisions[$slot]}" "${pci_names[$slot]}"
+        GPU_NAMES+=("$REPLY"); seen_slots[$slot]=1
+    done
     GPU_NAME='n/a'
     if ((${#GPU_NAMES[@]})); then
         GPU_NAME=${GPU_NAMES[0]}
         ((${#GPU_NAMES[@]} > 1)) && GPU_NAME+=" (+$((${#GPU_NAMES[@]}-1)) GPU)"
     fi
+    return 0
 }
 
 collect_static() {
@@ -459,8 +681,8 @@ collect_static() {
     fi
     read_value /proc/sys/kernel/hostname; HOST_NAME=${REPLY:-unknown}
     KERNEL_VER=$(uname -r); ARCH_NAME=$(uname -m)
-    SHELL_NAME=${SHELL##*/}; SHELL_NAME=${SHELL_NAME:-n/a}
-    DE_NAME=${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-n/a}}
+    get_shell
+    normalize_desktop_name "${XDG_CURRENT_DESKTOP:-${XDG_SESSION_DESKTOP:-${DESKTOP_SESSION:-}}}"; DE_NAME=$REPLY
     DISPLAY_SERVER=${XDG_SESSION_TYPE:-n/a}
     [[ $DISPLAY_SERVER == n/a && -n ${WAYLAND_DISPLAY:-} ]] && DISPLAY_SERVER=wayland
     [[ $DISPLAY_SERVER == n/a && -n ${DISPLAY:-} ]] && DISPLAY_SERVER=x11
@@ -492,11 +714,7 @@ collect_static() {
     get_packages
     pid1=$(ps -p 1 -o comm= 2>/dev/null); INIT_SYSTEM=${pid1:-n/a}
     if [[ $pid1 == openrc-init || -d /run/openrc/started ]]; then INIT_SYSTEM=OpenRC; fi
-    AUDIO_SERVER='n/a'
-    if command -v pgrep >/dev/null 2>&1; then
-        if pgrep -x -u "$UID" pipewire >/dev/null 2>&1; then AUDIO_SERVER=PipeWire
-        elif pgrep -x -u "$UID" pulseaudio >/dev/null 2>&1; then AUDIO_SERVER=PulseAudio; fi
-    fi
+    get_audio_server
     FILESYSTEM_NAME=$(LC_ALL=C df -PT / 2>/dev/null | awk 'NR==2{print $2}')
     read_value /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver; CPU_DRIVER=${REPLY:-n/a}
     CPU_GOVERNOR='n/a'; CPU_EPP=''
@@ -524,27 +742,37 @@ sample() {
 setup_style() {
     local charmap
     RESET='' BOLD='' TEXT='' ACCENT='' DIM='' BORDER='' GOOD='' WARN='' BAD=''
+    BLUE='' PINE='' VIOLET=''
     if [[ $COLOR_MODE == always || ($COLOR_MODE == auto && -t 1 && ! ${NO_COLOR+x} && ${TERM:-dumb} != dumb) ]]; then
         RESET=$'\e[0m'; BOLD=$'\e[1m'; TEXT=$'\e[37m'; ACCENT=$'\e[36m'
-        DIM=$'\e[37m'; BORDER=$'\e[34m'; GOOD=$'\e[32m'; WARN=$'\e[33m'; BAD=$'\e[31m'
+        DIM=$'\e[36m'; BORDER=$'\e[34m'; WARN=$'\e[33m'; BAD=$'\e[31m'
+        BLUE=$'\e[34m'; PINE=$'\e[36m'; VIOLET=$'\e[35m'
         case ${TERM:-} in *256color*|*direct*|xterm-kitty|foot*)
-            TEXT=$'\e[38;5;254m'; ACCENT=$'\e[38;5;110m'; DIM=$'\e[38;5;250m'
-            BORDER=$'\e[38;5;109m'; GOOD=$'\e[38;5;150m'; WARN=$'\e[38;5;222m'; BAD=$'\e[38;5;131m' ;;
+            TEXT=$'\e[38;5;255m'; ACCENT=$'\e[38;5;117m'; DIM=$'\e[38;5;109m'
+            BORDER=$'\e[38;5;67m'; BLUE=$'\e[38;5;110m'; PINE=$'\e[38;5;73m'; VIOLET=$'\e[38;5;98m'
+            WARN=$'\e[38;5;180m'; BAD=$'\e[38;5;131m' ;;
         esac
         if [[ ${COLORTERM:-} == truecolor || ${COLORTERM:-} == 24bit || ${TERM:-} == *direct* ]]; then
-            # Nord-inspired foregrounds; preserve the user's terminal background.
-            TEXT=$'\e[38;2;229;233;240m'; ACCENT=$'\e[38;2;136;192;208m'
-            DIM=$'\e[38;2;184;197;214m'; BORDER=$'\e[38;2;129;161;193m'
-            GOOD=$'\e[38;2;163;190;140m'; WARN=$'\e[38;2;235;203;139m'; BAD=$'\e[38;2;191;97;106m'
+            # A cold Nordic palette; each group has its own accent.
+            TEXT=$'\e[38;2;232;239;245m'; ACCENT=$'\e[38;2;154;219;232m'
+            DIM=$'\e[38;2;132;158;181m'; BORDER=$'\e[38;2;84;109;136m'
+            BLUE=$'\e[38;2;130;173;222m'; PINE=$'\e[38;2;91;175;164m'; VIOLET=$'\e[38;2;148;116;206m'
+            WARN=$'\e[38;2;216;185;138m'; BAD=$'\e[38;2;191;97;106m'
         fi
+        GOOD=$PINE
     fi
     BAR_ON='#' BAR_OFF='-' RULE_CHAR='-' MARK='>' DEG=C UNICODE=0
     BOX_TL='+' BOX_TR='+' BOX_BL='+' BOX_BR='+' BOX_V='|'
+    BOX_LJOIN='+' BOX_RJOIN='+'
     charmap=$(locale charmap 2>/dev/null)
     if ((ASCII == 0)) && [[ $charmap == UTF-8 || $charmap == UTF8 ]]; then
         BAR_ON='━'; BAR_OFF='─'; RULE_CHAR='─'; MARK='●'; DEG='°C'; UNICODE=1
         BOX_TL='╭'; BOX_TR='╮'; BOX_BL='╰'; BOX_BR='╯'; BOX_V='│'
+        BOX_LJOIN='├'; BOX_RJOIN='┤'
     fi
+    ICON_WIDTH=0
+    ((ICONS && UNICODE)) && ICON_WIDTH=2
+    return 0
 }
 
 get_size() {
@@ -581,11 +809,51 @@ cell() {
     CELLS+=("${2:-$TEXT}$REPLY$RESET")
 }
 
+icon_prefix() {
+    REPLY=''
+    ((ICON_WIDTH)) || return 0
+    # Text symbols, without emoji presentation or private-use font glyphs.
+    # One symbol and one space; --no-icons preserves Unicode panel borders.
+    case $1 in
+        OS) REPLY='◈' ;; HOST) REPLY='⌂' ;; KERNEL) REPLY='⌘' ;;
+        CPU) REPLY='▣' ;; GPU) REPLY='▧' ;; ARCH) REPLY='◇' ;;
+        DESKTOP) REPLY='▤' ;; UPTIME) REPLY='◷' ;; TEMP) REPLY='≋' ;;
+        RAM) REPLY='▥' ;; SWAP) REPLY='⇄' ;; DISK|'ROOT FS') REPLY='◉' ;;
+        NET) REPLY='⇅' ;; BAT) REPLY='▰' ;; POWER|EPP) REPLY='ϟ' ;;
+        PACKAGES|MANAGERS|AUR) REPLY='▦' ;; SHELL) REPLY='›' ;; INIT) REPLY='↻' ;;
+        AUDIO) REPLY='♪' ;; DRIVER) REPLY='↔' ;; GOVERNOR) REPLY='◌' ;;
+        *) REPLY='·' ;;
+    esac
+    REPLY+=' '
+}
+
+icon_cell() {
+    local prefix
+    icon_prefix "$1"; prefix=$REPLY
+    fit "$((CW-ICON_WIDTH))" "$2"
+    CELLS+=("${4:-$ACCENT}$prefix${3:-$TEXT}$REPLY$RESET")
+}
+
 field() {
-    local label value
-    fit 9 "$1"; label=$REPLY
-    fit "$((CW-9))" "$2"; value=$REPLY
-    CELLS+=("$DIM$label$TEXT$value$RESET")
+    local label value label_width=$((9+ICON_WIDTH))
+    icon_prefix "$1"; label="$REPLY$1"
+    fit "$label_width" "$label"; label=$REPLY
+    fit "$((CW-label_width))" "$2"; value=$REPLY
+    CELLS+=("${3:-$BLUE}$label$TEXT$value$RESET")
+}
+
+detail_field() {
+    local label=$1 value=$2 tint=${3:-$BLUE} width=$((CW-9-ICON_WIDTH)) chunk
+    sanitize "$value"; value=$REPLY
+    # Long lists remain readable across pages; the label repeats on each line.
+    while ((${#value} > width)); do
+        chunk=${value:0:width}
+        [[ $chunk == *' '* ]] && chunk=${chunk% *}
+        [[ -n $chunk ]] || chunk=${value:0:width}
+        field "$label" "$chunk" "$tint"
+        value=${value:${#chunk}}; value=${value#"${value%%[! ]*}"}
+    done
+    field "$label" "$value" "$tint"
 }
 
 pair_cell() {
@@ -595,27 +863,45 @@ pair_cell() {
     CELLS+=("$TEXT$left$REPLY$RESET")
 }
 
+pair_field() {
+    local a b c d label_width=$((9+ICON_WIDTH))
+    icon_prefix "$1"; a="$REPLY$1"
+    fit "$label_width" "$a"; a=$REPLY
+    fit "$((CW/2-label_width))" "$2"; b=$REPLY
+    icon_prefix "$3"; c="$REPLY$3"
+    fit "$label_width" "$c"; c=$REPLY
+    fit "$((CW-CW/2-label_width))" "$4"; d=$REPLY
+    CELLS+=("$BLUE$a$TEXT$b$BLUE$c$TEXT$d$RESET")
+}
+
 metric() {
     local label=$1 pct=$2 note=$3 length filled empty bar tail color suffix a n
     # Stable columns: changing a value's number of digits must not move its bar.
     length=8; ((CW < 48)) && length=4; ((CW >= 65)) && length=18
     n=${pct%.*}; [[ -n $n ]] || n=0
     ((n < 0)) && n=0; ((n > 100)) && n=100
-    color=$GOOD; ((n >= 75)) && color=$WARN; ((n >= 90)) && color=$BAD
+    case $label in
+        RAM|SWAP) color=$VIOLET ;;
+        DISK) color=$BLUE ;;
+        BAT) color=$PINE ;;
+        *) color=$ACCENT ;;
+    esac
     if [[ $label == BAT ]]; then
-        color=$GOOD
         if [[ $BAT_STATUS == Discharging ]]; then
             ((n < 30)) && color=$WARN
             ((n < 15)) && color=$BAD
         fi
+    else
+        ((n >= 75)) && color=$WARN; ((n >= 90)) && color=$BAD
     fi
     filled=$((n*length/100)); empty=$((length-filled))
     repeat "$filled" "$BAR_ON"; bar=$REPLY
     repeat "$empty" "$BAR_OFF"; tail=$REPLY
-    fit 5 "$label"; a=$REPLY
+    icon_prefix "$label"; a="$REPLY$label"
+    fit "$((5+ICON_WIDTH))" "$a"; a=$REPLY
     if [[ -n $pct ]]; then printf -v suffix '%5s%%' "$pct"; else suffix='   n/a'; fi
-    fit "$((CW-14-length))" "$note"; note=$REPLY
-    CELLS+=("$DIM$a$color$bar$BORDER$tail$TEXT $BOLD$suffix$RESET$TEXT  $note$RESET")
+    fit "$((CW-14-length-ICON_WIDTH))" "$note"; note=$REPLY
+    CELLS+=("$color$a$bar$BORDER$tail$TEXT $BOLD$suffix$RESET$TEXT  $note$RESET")
 }
 
 memory_note() {
@@ -624,87 +910,149 @@ memory_note() {
     human_bytes "$total"; REPLY="$a / $REPLY"
 }
 
-history_cell() {
-    local value level text='' glyphs=' .:-=+*#%@'
+rule_row() {
+    local left=$1 right=$2 title=${3:-} tint=${4:-$ACCENT} tail
+    if [[ -z $title ]]; then
+        repeat "$((CW+2))" "$RULE_CHAR"
+        REPLY="$BORDER$left$REPLY$right$RESET"
+        return
+    fi
+    fit "$((CW-1))" "$title"; title=${REPLY%"${REPLY##*[! ]}"}
+    repeat "$((CW-1-${#title}))" "$RULE_CHAR"; tail=$REPLY
+    REPLY="$BORDER$left$RULE_CHAR $tint$BOLD$title$RESET$BORDER $tail$right$RESET"
+}
+
+divider() {
+    rule_row "$BOX_LJOIN" "$BOX_RJOIN" "$1" "${2:-$ACCENT}"
+    # A private marker distinguishes full-width borders from padded data cells.
+    # User-derived text is sanitized before insertion and cannot emit it.
+    CELLS+=($'\037'"$REPLY")
+}
+
+history_section() {
+    local value level text='' glyphs=' .:-=+*#%@' count=${#CPU_HISTORY[@]} capacity=$((CW-8))
     ((UNICODE)) && glyphs='▁▂▃▄▅▆▇█'
-    for value in "${CPU_HISTORY[@]}"; do
+    ((count > capacity)) && count=$capacity
+    divider "CPU USAGE / last $count samples" "$ACCENT"
+    if ((count == 0)); then cell 'Waiting for CPU samples' "$DIM"; return; fi
+    for value in "${CPU_HISTORY[@]: -count}"; do
         level=$((value*(${#glyphs}-1)/100)); text+=${glyphs:level:1}
     done
-    cell "HISTORY  $text" "$ACCENT"
+    cell "0-100%  $text" "$ACCENT"
 }
 
 panelize() {
-    local title=$1 height=${2:-${#CELLS[@]}} i tail empty
+    local title=$1 height=${2:-${#CELLS[@]}} i row empty
     PANEL=()
-    fit "$((CW-1))" "$title"; title=${REPLY%"${REPLY##*[! ]}"}
-    repeat "$((CW-1-${#title}))" "$RULE_CHAR"; tail=$REPLY
-    PANEL+=("$BORDER$BOX_TL$RULE_CHAR $ACCENT$BOLD$title$RESET$BORDER $tail$BOX_TR$RESET")
+    rule_row "$BOX_TL" "$BOX_TR" "$title"; PANEL+=("$REPLY")
     fit "$CW" ''; empty=$REPLY
     for ((i=0;i<height;i++)); do
-        PANEL+=("$BORDER$BOX_V$RESET ${CELLS[i]:-$empty} $BORDER$BOX_V$RESET")
+        row=${CELLS[i]:-$empty}
+        if [[ $row == $'\037'* ]]; then PANEL+=("${row:1}")
+        else PANEL+=("$BORDER$BOX_V$RESET $row $BORDER$BOX_V$RESET"); fi
     done
-    repeat "$((CW+2))" "$RULE_CHAR"
-    PANEL+=("$BORDER$BOX_BL$REPLY$BOX_BR$RESET")
+    rule_row "$BOX_BL" "$BOX_BR"; PANEL+=("$REPLY")
+}
+
+banner() {
+    local status=$1 big=0 tag left right i CW=$((WIDTH-4)) BORDER=$VIOLET
+    local -a CELLS=() PANEL=() logo=(
+        '╔╦╗ ╔═╗ ╔╦╗ ╔═╗ ╔═╗ ╔═╗ ╔╦╗ ╔═╗ ╦ ╦'
+        ' ║║ ╠═╣  ║  ╠═╣ ╠╣  ║╣   ║  ║   ╠═╣'
+        '═╩╝ ╩ ╩  ╩  ╩ ╩ ╚   ╚═╝  ╩  ╚═╝ ╩ ╩'
+    ) meta=("$status" "$VERSION" '')
+    if ((ROWS < 18 && SMALL)); then
+        fit "$((WIDTH-${#status}-4))" 'DATAFETCH'; tag=$REPLY
+        FRAME+=("  $VIOLET[$TEXT$BOLD $tag$RESET$VIOLET] $PINE$status$RESET")
+        return
+    fi
+    if ((WIDTH >= 69 && UNICODE && ((WIDE && ROWS >= 20) || ROWS >= 26))); then big=1; fi
+    if ((big)); then
+        for ((i=0;i<3;i++)); do
+            fit 39 "${logo[i]}"; left=$REPLY
+            fit "$((CW-39))" "${meta[i]}"; right=$REPLY
+            tag=$BLUE; ((i == 0)) && tag=$PINE
+            CELLS+=("$TEXT$left$tag$right$RESET")
+        done
+        panelize 'Klod Cripta'
+    else
+        fit "$((CW-${#status}))" 'D A T A F E T C H'; left=$REPLY
+        CELLS+=("$TEXT$BOLD$left$RESET$PINE$status$RESET")
+        panelize "Klod Cripta / $VERSION"
+    fi
+    for tag in "${PANEL[@]}"; do FRAME+=("  $tag"); done
 }
 
 system_cells() {
-    local name gpu_text=''
+    local name
     CELLS=()
     if ((DETAILS)); then
-        field PACKAGES "$PKG_COUNT ($PKG_MANAGER)${FLATPAK_COUNT:+ / $FLATPAK_COUNT Flatpak}"
+        detail_field PACKAGES "$PKG_COUNT ($PKG_MANAGER)${FLATPAK_COUNT:+ / $FLATPAK_COUNT Flatpak}"
+        detail_field MANAGERS "${PKG_MANAGERS:-$PKG_MANAGER}"
+        detail_field AUR "${AUR_HELPERS:-non pervenuto}" "$VIOLET"
+        detail_field SHELL "$SHELL_NAME"
+        detail_field INIT "$INIT_SYSTEM"
+        detail_field 'ROOT FS' "${FILESYSTEM_NAME:-n/a}"
+        detail_field AUDIO "$AUDIO_SERVER" "$PINE"
         if ((SMALL)); then
-            cell "SHELL $SHELL_NAME / INIT $INIT_SYSTEM"
-            if [[ -n $AUR_HELPERS ]]; then field AUR "$AUR_HELPERS"
-            else field GOVERNOR "$CPU_GOVERNOR"; fi
-        elif ((WIDE)); then
-            field SHELL "$SHELL_NAME"
-            field INIT "$INIT_SYSTEM"
-            field AUDIO "$AUDIO_SERVER"
-            field 'ROOT FS' "${FILESYSTEM_NAME:-n/a}"
-            cell ''
-            field DRIVER "$CPU_DRIVER"
-            field GOVERNOR "$CPU_GOVERNOR"
-            field EPP "${CPU_EPP:-n/a}"
-            [[ -n $AUR_HELPERS ]] && field AUR "$AUR_HELPERS"
-            cell ''
-            if ((${#GPU_NAMES[@]})); then
-                for name in "${GPU_NAMES[@]}"; do field GPU "$name"; done
-            else field GPU 'n/a'; fi
-        else
-            pair_cell "SHELL $SHELL_NAME" "INIT $INIT_SYSTEM"
-            pair_cell "AUDIO $AUDIO_SERVER" "ROOT FS ${FILESYSTEM_NAME:-n/a}"
-            field DRIVER "$CPU_DRIVER"
-            field GOVERNOR "$CPU_GOVERNOR${CPU_EPP:+ / $CPU_EPP}"
-            if [[ -n $AUR_HELPERS ]]; then field AUR "$AUR_HELPERS"
-            else field ARCH "$ARCH_NAME / $CPU_CORES cores / $CPU_THREADS threads"; fi
-            for name in "${GPU_NAMES[@]}"; do gpu_text+="${gpu_text:+; }$name"; done
-            field GPU "${gpu_text:-n/a}"
+            divider SESSION "$BLUE"
+            detail_field DESKTOP "$DE_NAME / $DISPLAY_SERVER"
+            detail_field HOST "$HOST_NAME"
+            detail_field KERNEL "$KERNEL_VER"
+            detail_field UPTIME "$UPTIME"
         fi
+        divider 'CPU POLICY' "$VIOLET"
+        detail_field DRIVER "$CPU_DRIVER" "$VIOLET"
+        detail_field GOVERNOR "$CPU_GOVERNOR" "$VIOLET"
+        detail_field EPP "${CPU_EPP:-n/a}" "$VIOLET"
+        divider GRAPHICS "$VIOLET"
+        if ((${#GPU_NAMES[@]})); then
+            for name in "${GPU_NAMES[@]}"; do detail_field GPU "$name" "$VIOLET"; done
+        else detail_field GPU 'n/a' "$VIOLET"; fi
     elif ((SMALL)); then
-        cell "$OS_NAME" "$TEXT$BOLD"
-        field CPU "$CPU_MODEL"
-        field GPU "$GPU_NAME"
+        icon_cell OS "$OS_NAME" "$TEXT$BOLD"
+        field CPU "$CPU_MODEL" "$ACCENT"
+        field GPU "$GPU_NAME" "$VIOLET"
     elif ((WIDE)); then
-        cell "$OS_NAME" "$TEXT$BOLD"
+        icon_cell OS "$OS_NAME" "$TEXT$BOLD"
         field HOST "$HOST_NAME"
         field KERNEL "$KERNEL_VER"
-        field DESKTOP "$DE_NAME"
-        field SESSION "$DISPLAY_SERVER"
-        cell ''
-        field CPU "$CPU_MODEL"
-        cell "$CPU_CORES cores / $CPU_THREADS threads / $ARCH_NAME" "$DIM"
-        field GPU "$GPU_NAME"
-        cell ''
+        divider HARDWARE "$VIOLET"
+        field CPU "$CPU_MODEL" "$ACCENT"
+        icon_cell ARCH "$CPU_CORES cores / $CPU_THREADS threads / $ARCH_NAME" "$DIM"
+        field GPU "$GPU_NAME" "$VIOLET"
+        divider SESSION "$BLUE"
+        field DESKTOP "$DE_NAME / $DISPLAY_SERVER"
         field UPTIME "$UPTIME"
     else
-        cell "$OS_NAME" "$TEXT$BOLD"
-        pair_cell "HOST $HOST_NAME" "UPTIME $UPTIME"
+        pair_field OS "$OS_NAME" HOST "$HOST_NAME"
         field KERNEL "$KERNEL_VER"
-        pair_cell "DESKTOP $DE_NAME" "SESSION $DISPLAY_SERVER"
-        field CPU "$CPU_MODEL"
-        cell "$CPU_CORES cores / $CPU_THREADS threads / $ARCH_NAME" "$DIM"
-        field GPU "$GPU_NAME"
+        pair_field DESKTOP "$DE_NAME / $DISPLAY_SERVER" UPTIME "$UPTIME"
+        field CPU "$CPU_MODEL / $CPU_CORES cores, $CPU_THREADS threads" "$ACCENT"
+        field GPU "$GPU_NAME" "$VIOLET"
     fi
+    if ((DETAILS == 0 && ${#CELLS[@]}+6 <= SYSTEM_CAPACITY)); then
+        divider SOFTWARE "$BLUE"
+        field MANAGERS "${PKG_MANAGERS:-$PKG_MANAGER}"
+        field AUR "${AUR_HELPERS:-non pervenuto}" "$VIOLET"
+        pair_field SHELL "$SHELL_NAME" INIT "$INIT_SYSTEM"
+        field 'ROOT FS' "${FILESYSTEM_NAME:-n/a}"
+        field AUDIO "$AUDIO_SERVER" "$PINE"
+    fi
+    return 0
+}
+
+paginate_system() {
+    local total=${#CELLS[@]} offset
+    SYSTEM_PAGES=1
+    if ((DETAILS)); then
+        SYSTEM_PAGES=$(((total+SYSTEM_CAPACITY-1)/SYSTEM_CAPACITY))
+        ((SYSTEM_PAGES < 1)) && SYSTEM_PAGES=1
+        ((DETAIL_PAGE >= SYSTEM_PAGES)) && DETAIL_PAGE=$((SYSTEM_PAGES-1))
+        offset=$((DETAIL_PAGE*SYSTEM_CAPACITY))
+        CELLS=("${CELLS[@]:offset:SYSTEM_CAPACITY}")
+    else DETAIL_PAGE=0; fi
+    return 0
 }
 
 live_cells() {
@@ -715,7 +1063,8 @@ live_cells() {
         raw_peak=$(((CPU_PEAK+50)/100))
         printf -v note '%s%s / peak %d.%d%s' "$CPU_TEMP" "$DEG" "$((raw_peak/10))" "$((raw_peak%10))" "$DEG"
     else note='n/a'; fi
-    field TEMP "$note"
+    field TEMP "$note" "$ACCENT"
+    ((DIVIDER_LEVEL >= 1)) && divider 'MEMORY / STORAGE' "$VIOLET"
     memory_note "$RAM_USED" "$RAM_TOTAL"; metric RAM "$RAM_PERCENT" "$REPLY"
     if ((SWAP_TOTAL)); then
         memory_note "$SWAP_USED" "$SWAP_TOTAL"; metric SWAP "$SWAP_PERCENT" "$REPLY"
@@ -723,34 +1072,30 @@ live_cells() {
     if ((DISK_TOTAL)); then
         human_bytes "$DISK_FREE"; metric DISK "$DISK_PERCENT" "/ $REPLY free"
     else metric DISK '' 'n/a'; fi
-    ((WIDE)) && cell ''
+    if ((DIVIDER_LEVEL >= 2)); then
+        if ((DIVIDER_LEVEL == 2)) && [[ -n $BAT_NAME ]]; then divider 'NETWORK / POWER' "$BLUE"
+        else divider "NETWORK${NET_IFACE:+ / $NET_IFACE}" "$BLUE"; fi
+    fi
     if [[ -n $NET_IFACE ]]; then
         human_bytes "$RX_RATE"; note="down $REPLY/s"
         human_bytes "$TX_RATE"; note+="  up $REPLY/s"
-        if ((SMALL)); then cell "NET  $note"
-        else field NET "$NET_IFACE"; cell "     $note"; fi
-    else
-        field NET 'No active interface'
-        ((SMALL == 0)) && cell ''
-    fi
+        ((DIVIDER_LEVEL < 3)) && note+=" / $NET_IFACE"
+        field NET "$note" "$BLUE"
+    else field NET 'No active interface' "$BLUE"; fi
     if [[ -n $BAT_NAME ]]; then
-        ((WIDE)) && cell ''
+        ((DIVIDER_LEVEL >= 3)) && divider "POWER / $BAT_NAME" "$PINE"
         if ((SMALL)); then
             metric BAT "${BAT_PERCENT:-}" "$BAT_STATUS${BAT_POWER:+ ${BAT_POWER}W}"
         else
-            metric BAT "${BAT_PERCENT:-}" "$BAT_NAME / $BAT_STATUS"
-            if ((WIDE)); then
-                field POWER "${BAT_POWER:-n/a}${BAT_POWER:+ W}"
-                field HEALTH "${BAT_HEALTH:-n/a}${BAT_HEALTH:+%}"
-            else
-                field POWER "${BAT_POWER:-n/a}${BAT_POWER:+ W} / health ${BAT_HEALTH:-n/a}${BAT_HEALTH:+%}"
-            fi
+            note=$BAT_STATUS; ((DIVIDER_LEVEL < 3)) && note="$BAT_NAME / $note"
+            metric BAT "${BAT_PERCENT:-}" "$note"
+            field POWER "${BAT_POWER:-n/a}${BAT_POWER:+ W} / health ${BAT_HEALTH:-n/a}${BAT_HEALTH:+%}" "$PINE"
         fi
     fi
 }
 
 build_frame() {
-    local status tag note info WIDE=0 logo=0 CW left_width right_width title header_rows height i
+    local status tag note info WIDE=0 DIVIDER_LEVEL=0 CW left_width right_width title header_rows height i budget base SYSTEM_CAPACITY
     local -a CELLS=() PANEL=() system=() live=()
     FRAME=()
     if ((ACTIVE && (COLS < 48 || ROWS < 16))); then
@@ -766,38 +1111,38 @@ build_frame() {
     status="${MARK} LIVE  ${INTERVAL}s"
     ((PAUSED)) && status="${MARK} PAUSED"
     ((ONCE)) && status='SNAPSHOT'
-    tag='DATAFETCH'
-    if ((UNICODE && WIDTH >= 50 && (SMALL == 0 || ROWS >= 18))); then
-        tag='█▀▄ ▄▀█ ▀█▀ ▄▀█ █▀▀ █▀▀ ▀█▀ █▀▀ █ █'
-        logo=1
-    fi
-    fit "$((WIDTH-${#status}))" "$tag"; tag=$REPLY
-    FRAME+=("  $ACCENT$BOLD$tag$RESET$GOOD$status$RESET")
-    if ((SMALL == 0 || ROWS >= 18)); then
-        if ((logo)); then add_row '█▄▀ █▀█  █  █▀█ █▀  ██▄  █  █▄▄ █▀█' "$ACCENT$BOLD"
-        else add_row 'SYSTEM MONITOR' "$ACCENT"; fi
-        add_row "DATAFETCH / $VERSION / Klod Cripta" "$DIM"
-    fi
+    banner "$status"
     header_rows=${#FRAME[@]}
     title=SYSTEM; ((DETAILS)) && title='SYSTEM / DETAILS'
     if ((WIDE)); then
         left_width=$(((WIDTH-2)*44/100)); right_width=$((WIDTH-2-left_width))
-        CW=$((left_width-4)); system_cells; system=("${CELLS[@]}")
-        CW=$((right_width-4)); live_cells; live=("${CELLS[@]}")
-        if ((ROWS >= header_rows+${#live[@]}+5)); then
-            cell ''; history_cell; live=("${CELLS[@]}")
-        fi
+        budget=$((ROWS-header_rows-3)); SYSTEM_CAPACITY=$budget
+        CW=$((left_width-4)); system_cells; paginate_system; system=("${CELLS[@]}")
+        ((DETAILS && SYSTEM_PAGES > 1)) && title+=" $((DETAIL_PAGE+1))/$SYSTEM_PAGES"
+        CW=$((right_width-4))
+        DIVIDER_LEVEL=3; live_cells
+        if ((budget >= ${#CELLS[@]}+2)); then history_section; fi
+        live=("${CELLS[@]}")
         height=${#system[@]}; ((${#live[@]} > height)) && height=${#live[@]}
         # A multi-GPU details view must still leave room for the key bar.
-        ((height > ROWS-header_rows-3)) && height=$((ROWS-header_rows-3))
+        ((height > budget)) && height=$budget
         CW=$((left_width-4)); CELLS=("${system[@]}"); panelize "$title" "$height"; system=("${PANEL[@]}")
         CW=$((right_width-4)); CELLS=("${live[@]}"); panelize "LIVE METRICS / $TIME_NOW" "$height"
         for ((i=0;i<${#PANEL[@]};i++)); do FRAME+=("  ${system[i]}  ${PANEL[i]}"); done
     else
-        CW=$((WIDTH-4)); system_cells; panelize "$title"
+        base=6
+        if [[ -n $BAT_NAME ]]; then ((SMALL)) && base=$((base+1)) || base=$((base+2)); fi
+        SYSTEM_CAPACITY=$((ROWS-header_rows-base-5))
+        ((SYSTEM_CAPACITY < 1)) && SYSTEM_CAPACITY=1
+        CW=$((WIDTH-4)); system_cells; paginate_system
+        ((DETAILS && SYSTEM_PAGES > 1)) && title+=" $((DETAIL_PAGE+1))/$SYSTEM_PAGES"
+        panelize "$title"
         for tag in "${PANEL[@]}"; do FRAME+=("  $tag"); done
+        # Reserve essential readings before assigning space to details pages.
+        budget=$((ROWS-${#FRAME[@]}-3))
+        DIVIDER_LEVEL=$((budget-base)); ((DIVIDER_LEVEL > 3)) && DIVIDER_LEVEL=3; ((DIVIDER_LEVEL < 0)) && DIVIDER_LEVEL=0
         live_cells
-        if ((SMALL == 0 && ROWS >= ${#FRAME[@]}+${#CELLS[@]}+5)); then cell ''; history_cell; fi
+        if ((SMALL == 0 && budget >= ${#CELLS[@]}+2)); then history_section; fi
         panelize "LIVE METRICS / $TIME_NOW"
         for tag in "${PANEL[@]}"; do FRAME+=("  $tag"); done
     fi
@@ -805,7 +1150,10 @@ build_frame() {
         add_row 'Snapshot / run without --once for live metrics' "$DIM"
     else
         note='p pause'; ((PAUSED)) && note='p resume'
-        info='d details'; ((DETAILS)) && info='d overview'
+        info='d details'
+        if ((DETAILS)); then
+            info='d overview'; ((DETAIL_PAGE+1 < SYSTEM_PAGES)) && info='d next'
+        fi
         if ((SMALL)); then add_row "$note  +/- speed  $info  q quit" "$DIM"
         else add_row "$note   +/- refresh   $info   q quit" "$DIM"; fi
     fi
@@ -871,7 +1219,10 @@ handle_key() {
                 sample
                 NEXT_SAMPLE=$((NOW_CS+INTERVAL_CS))
             fi ;;
-        d|D) DETAILS=$((1-DETAILS)) ;;
+        d|D)
+            if ((DETAILS == 0)); then DETAILS=1; DETAIL_PAGE=0
+            elif ((DETAIL_PAGE+1 < SYSTEM_PAGES)); then ((DETAIL_PAGE+=1))
+            else DETAILS=0; DETAIL_PAGE=0; fi ;;
         +|=)
             if ((INTERVAL_CS > 500)); then INTERVAL=5 INTERVAL_CS=500
             elif ((INTERVAL_CS > 200)); then INTERVAL=2 INTERVAL_CS=200
