@@ -15,6 +15,8 @@
 
 **Datafetch** is a Bash dashboard for GNU/Linux that brings system information and live readings into the same terminal window. Hardware and software details sit alongside CPU, memory, disk, network and battery readings.
 
+The program is written in **Bash**. **Python** is used only for the automated tests in [`tests/`](tests/), which are also counted in GitHub's language statistics. Python is not required to run Datafetch.
+
 Its **Nordic-inspired palette** combines icy white, light blue, cyan, pine green and cold violet. An outlined DATAFETCH title, fine borders, section dividers and small colored icons give each group its own space.
 
 ### What it does
@@ -176,6 +178,8 @@ For bugs or suggestions, [open an issue](https://github.com/KlodCripta/Datafetch
 </p>
 
 **Datafetch** è una dashboard Bash per GNU/Linux che riunisce informazioni di sistema e letture in tempo reale nella stessa finestra del terminale. I dettagli di hardware e software affiancano le letture di CPU, memoria, disco, rete e batteria.
+
+Il programma è scritto in **Bash**. Il codice **Python** serve solo ai test automatici nella cartella [`tests/`](tests/), conteggiati anche nelle statistiche dei linguaggi di GitHub. Per usare Datafetch non serve Python.
 
 La **palette ispirata allo stile Nordic** combina bianco freddo, blu chiaro, azzurro, verde pino e viola freddo. Il titolo DATAFETCH a contorno, le cornici sottili, i divisori e le piccole icone colorate danno a ogni gruppo il proprio spazio.
 
